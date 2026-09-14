@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Tag the focused herdr tab with focus/priority/blocked state.
+
+Two independent slots are encoded as emoji marks at the front of the tab name:
+
+    slot 1 (focus or priority)   ⭐ focus   🔴 p0   🟡 p1   ⚪ p2
+    slot 2 (blocked on)          👀 review  ✋ them
+
+    "⭐👀 dp-140-composer"  = the current focus, blocked on a review
+    "🟡 null-integrator"    = p1, not blocked
+
+The tab NAME is the source of truth. herdr persists tab names across restarts
+but not pane metadata, so `resync` rebuilds every $focus/$p/$blocked token
+from the marks — see the note at the bottom of this file.
+
+Usage:
+    herdr-tag-tab focus            ⭐ exclusive: demotes any previous focus to p0
+    herdr-tag-tab p0 | p1 | p2     set priority, drops ⭐ from this tab
+    herdr-tag-tab review | them    mark what it's blocked on
+    herdr-tag-tab unblock          clear slot 2, keep priority
+    herdr-tag-tab clear            clear both slots and all tokens
+    herdr-tag-tab resync           rebuild tokens from marks on every tab
+"""
+import json
+import re
+import subprocess
+import sys
+
+FOCUS = "⭐"
+PRIORITY = {"p0": "\U0001F534", "p1": "\U0001F7E1", "p2": "⚪"}
+BLOCKED = {"review": "\U0001F440", "them": "✋"}
+
+PRIORITY_BY_MARK = {m: p for p, m in PRIORITY.items()}
+BLOCKED_BY_MARK = {m: b for b, m in BLOCKED.items()}
+
+SLOT1 = FOCUS + "".join(PRIORITY.values())
+SLOT2 = "".join(BLOCKED.values())
+# Marks are position-significant: slot 1 then slot 2, then the real name.
+MARKS_RE = re.compile(r"^([" + SLOT1 + r"]?)([" + SLOT2 + r"]?)\s*(.*)$", re.S)
+
+
+def herdr(*args, capture=True):
+    r = subprocess.run(["herdr", *args], capture_output=capture, text=True)
+    return r.stdout if capture else ""
+
+
+def jget(*args):
+    try:
+        return json.loads(herdr(*args))["result"]
+    except (ValueError, KeyError):
+        return None
+
+
+def split_marks(label):
+    """-> (slot1_mark, slot2_mark, bare_name)"""
+    m = MARKS_RE.match(label or "")
+    return (m.group(1), m.group(2), m.group(3).strip()) if m else ("", "", label or "")
+
+
+def all_tabs():
+    spaces = (jget("workspace", "list") or {}).get("workspaces", [])
+    out = []
+    for w in spaces:
+        tabs = (jget("tab", "list", "--workspace", w["workspace_id"]) or {}).get("tabs", [])
+        out.extend(tabs)
+    return out
+
+
+def focused_tab_id():
+    spaces = (jget("workspace", "list") or {}).get("workspaces", [])
+    f = next((w for w in spaces if w.get("focused")), None)
+    return f.get("active_tab_id") if f else None
+
+
+def panes_of(tab_id):
+    panes = (jget("pane", "list") or {}).get("panes", [])
+    return [p["pane_id"] for p in panes if p.get("tab_id") == tab_id]
+
+
+def write_tokens(tab_id, slot1, slot2):
+    """Make pane tokens match the marks. Cleared tokens are omitted, not blanked."""
+    focus = "NOW" if slot1 == FOCUS else None
+    # Values stay as "p0"/"p1"/"p2" and are matched with `equals` rules --
+    # numeric gt/lt rules would depend on herdr coercing a string token value.
+    prio = "p0" if slot1 == FOCUS else PRIORITY_BY_MARK.get(slot1)
+    blocked = BLOCKED_BY_MARK.get(slot2)
+
+    for pid in panes_of(tab_id):
+        args = ["pane", "report-metadata", pid, "--source", "herdr-tag-tab"]
+        for name, val in (("focus", focus), ("p", prio), ("blocked", blocked)):
+            args += ["--token", f"{name}={val}"] if val else ["--clear-token", name]
+        herdr(*args, capture=False)
+
+
+def apply(tab_id, label, slot1=None, slot2=None):
+    cur1, cur2, bare = split_marks(label)
+    new1 = cur1 if slot1 is None else slot1
+    new2 = cur2 if slot2 is None else slot2
+    name = f"{new1}{new2} {bare}".strip() or bare or tab_id.split(":")[-1]
+    herdr("tab", "rename", tab_id, name, capture=False)
+    write_tokens(tab_id, new1, new2)
+    return name
+
+
+def main():
+    cmd = (sys.argv[1] if len(sys.argv) > 1 else "").strip().lower()
+
+    if cmd == "resync":
+        n = 0
+        for t in all_tabs():
+            s1, s2, _ = split_marks(t.get("label", ""))
+            if s1 or s2:
+                write_tokens(t["tab_id"], s1, s2)
+                n += 1
+        print(f"resynced {n} tagged tab(s)")
+        return 0
+
+    tab_id = focused_tab_id()
+    if not tab_id:
+        print("no focused tab", file=sys.stderr)
+        return 1
+    tab = (jget("tab", "get", tab_id) or {}).get("tab", {})
+    label = tab.get("label", "")
+
+    if cmd == "focus":
+        # Exclusive: demote whoever currently holds the star to p0.
+        for t in all_tabs():
+            if t["tab_id"] == tab_id:
+                continue
+            s1, s2, _ = split_marks(t.get("label", ""))
+            if s1 == FOCUS:
+                apply(t["tab_id"], t["label"], slot1=PRIORITY["p0"], slot2=s2)
+        print(apply(tab_id, label, slot1=FOCUS))
+    elif cmd in PRIORITY:
+        print(apply(tab_id, label, slot1=PRIORITY[cmd]))
+    elif cmd in BLOCKED:
+        print(apply(tab_id, label, slot2=BLOCKED[cmd]))
+    elif cmd == "unblock":
+        print(apply(tab_id, label, slot2=""))
+    elif cmd == "clear":
+        print(apply(tab_id, label, slot1="", slot2=""))
+    else:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

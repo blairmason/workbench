@@ -1,0 +1,131 @@
+onboarding = false
+# Herdr configuration.  Validate with: herdr config check
+# Full reference: herdr --default-config
+
+[ui]
+# Group the agent panel by space, so all conversations for a repo sit together.
+# Trade-off vs. the old "priority": lost urgency-first ordering, kept the jump
+# keys below -- next_agent/focus_agent still walk agents, just space by space.
+agent_panel_sort = "spaces"
+
+# With several claudes in one space, name the pane in its border so you can
+# tell them apart without focusing each one.
+show_agent_labels_on_pane_borders = true
+
+[session]
+# After a server restart, restore agent panes into their actual prior
+# conversations rather than bare shells -- runs `claude --resume <id>`.
+# Requires an official integration reporting a session ref; the Claude
+# integration here is v7 and the docs require v6+. This is already the
+# default, set explicitly so it's visible and doesn't silently change.
+resume_agents_on_restore = true
+
+[keys]
+# Agent navigation ships UNBOUND by default, which hides the main reason to
+# run herdr with 10-15 concurrent agents: jumping to the one that needs you.
+#
+#   prefix+a         next agent
+#   prefix+shift+a   previous agent
+#   prefix+alt+1..9  jump straight to agent N
+#
+# a / shift+a are free -- the defaults use ? s q o w g c p n e h j k l v x z r b
+# t d and their shift variants.
+next_agent = "prefix+a"
+previous_agent = "prefix+shift+a"
+focus_agent = "prefix+alt+1..9"
+
+# One space per repo, so this is "switch repo". Reaches the first 9 only;
+# prefix+w (workspace_picker) is the real navigation past that.
+switch_workspace = "prefix+shift+1..9"
+
+# Claude sets its terminal title to the live task; surface it in the sidebar so
+# rows read by what the agent is doing, not just "backend".
+[ui.sidebar.agents]
+rows = [["state_icon", "workspace", "tab"], ["agent"]]
+
+# $focus / $p / $blocked are set by herdr-tag-tab (bound to prefix+alt+... below).
+# state_icon already shows what herdr DETECTS (working/idle/blocked-on-you), so
+# these carry only what it can't know: your priority, and external blockers.
+# First matching rule wins; unspecified style fields inherit the default.
+[ui.sidebar.agents.rows_by_agent]
+claude = [
+  ["state_icon", "workspace", "tab"],
+  ["terminal_title_stripped"],
+  [{ token = "$focus", fg = "#cdd6f4", bold = true },
+   { token = "$p", fg = "#9399b2", rules = [
+       { equals = "p0", fg = "#f38ba8", bold = true },
+       { equals = "p1", fg = "#f9e2af" },
+       { equals = "p2", fg = "#6c7086", dim = true },
+   ] },
+   { token = "$blocked", fg = "#f38ba8", rules = [
+       { equals = "review", fg = "#fab387", bold = true },
+       { equals = "them",   fg = "#cba6f7", bold = true },
+   ] }],
+  ["agent"],
+]
+
+# Default is "off" -- without this, an agent finishing or blocking in a
+# background space notifies nowhere.
+[ui.toast]
+delivery = "system"
+
+# peon-ping already plays sounds via Claude hooks; herdr's would double up.
+# Flip to true if you'd rather herdr own it (it distinguishes background spaces).
+[ui.sound]
+enabled = false
+
+[experimental]
+# Save recent pane screen history across full server restarts, so the 0.9.0
+# restart brings back scrollback and not just the resumed conversations.
+# Pairs with session.resume_agents_on_restore = true above.
+pane_history = true
+
+# Tag the FOCUSED tab: slot 1 is focus-or-priority, slot 2 is what's blocking.
+# The tab NAME carries the marks (persisted across restarts); the tokens above
+# are display-only, so `alt+s` rebuilds them from the marks after a restart.
+# alt+<letter> is free -- alt+1..9 is focus_agent, shift+1..9 is switch_workspace.
+[[keys.command]]
+key = "prefix+alt+f"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab focus"
+
+[[keys.command]]
+key = "prefix+alt+q"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab p0"
+
+[[keys.command]]
+key = "prefix+alt+w"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab p1"
+
+[[keys.command]]
+key = "prefix+alt+e"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab p2"
+
+[[keys.command]]
+key = "prefix+alt+r"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab review"
+
+[[keys.command]]
+key = "prefix+alt+t"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab them"
+
+[[keys.command]]
+key = "prefix+alt+d"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab unblock"
+
+[[keys.command]]
+key = "prefix+alt+x"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab clear"
+
+[[keys.command]]
+key = "prefix+alt+s"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-tag-tab resync"
+

@@ -59,8 +59,11 @@ branches belong to the agents.
 config/herdr-config.toml   the whole herdr config
 bin/herdr-tag-tab          focus/priority/blocked tagging for tabs
 bin/git-sync-src.sh        fetch (and optionally fast-forward) every repo in ~/src
-claude/                    the global instruction block + a per-project memory
-launchd/                   optional hourly fetch agent
+bin/rnd-harvest            sweep all Claude memory namespaces into one digest
+bin/rnd-weekly             weekly consolidation pass for ~/src/rnd
+rnd-seed/                  starting CLAUDE.md + inbox for the R&D repo
+claude/                    the two global instruction blocks + a project memory
+launchd/                   optional hourly fetch + weekly consolidation agents
 install.sh                 idempotent installer
 ```
 
@@ -249,3 +252,55 @@ instruction per repo than globally.
   can be several versions apart. Pick one and stay on it.
 - `herdr --skill` prints an agent-facing guide for driving panes/agents/spaces
   over the CLI. `herdr api schema --json` is the authoritative socket API.
+
+---
+
+## The R&D space (`~/src/rnd`)
+
+Repo-scoped spaces have nowhere to put work that isn't about one repo, so
+research scatters. Measured before building this: **83 memories across 9
+project namespaces** (backend 28, uniform 16, data-eng-workflows 11,
+baker-bot 10, substreams 8 …) with no consolidation path between them.
+
+`~/src/rnd` is a **notes repo** with its own herdr space. `inbox.md` takes raw
+capture, `topics/<slug>.md` holds the durable subjects, `decisions/` is an
+append-only log, `roadmap/<quarter>.md` is intent. Its `CLAUDE.md` holds the
+filing rules — chiefly *append to an existing topic rather than create a
+near-duplicate*, and *every claim carries provenance*.
+
+**Its `CLAUDE.md` deliberately overrides the global worktree rule.** In a notes
+repo a worktree would hide new notes on an unmerged branch, which is exactly
+the scattering the repo exists to prevent.
+
+### Two mechanisms feed it
+
+**At write time** — the block in `claude/CLAUDE-rnd-capture-block.md` tells any
+session, in any repo, to append a durable cross-cutting finding to
+`~/src/rnd/inbox.md` with its source repo and session id.
+
+**After the fact** — `rnd-harvest` walks every `~/.claude/projects/*/memory/`
+namespace and emits one digest with a triage checklist. `rnd-weekly` runs the
+harvest, hands it to `claude -p` in the repo to file into topics, then commits.
+
+```sh
+rnd-harvest                    # what isn't yet referenced in ~/src/rnd
+rnd-harvest --orphans          # only the at-risk worktree namespaces
+rnd-harvest --since 2026-09-01
+rnd-weekly --dry               # harvest only, print the digest path
+```
+
+### Why `--orphans` matters
+
+A session running **inside a git worktree** gets its own project namespace —
+`-Users-blairmason-src-backend--claude-worktrees-dp-166-chain-completeness` and
+friends. Any memory saved there is **orphaned when the worktree is removed**.
+That is a direct consequence of the worktree isolation this setup encourages,
+so the harvest flags those namespaces first and the digest says to file them
+before anything else.
+
+### Scheduling notes
+
+The weekly pass is a **LaunchAgent**, not a Claude cron job or a cloud routine:
+`CronCreate` jobs are session-only and expire after 7 days, and cloud routines
+can't read `~/.claude/projects/` on this machine. The plist sets an explicit
+`PATH` because launchd's default is minimal and wouldn't find `claude` or `git`.

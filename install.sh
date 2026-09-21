@@ -47,7 +47,7 @@ fi
 
 say "== 2. scripts -> ~/.local/bin"
 run mkdir -p "$HOME/.local/bin"
-for f in herdr-tag-tab git-sync-src.sh; do
+for f in herdr-tag-tab git-sync-src.sh rnd-harvest rnd-weekly; do
   backup "$HOME/.local/bin/$f"
   run cp "$HERE/bin/$f" "$HOME/.local/bin/$f"
   run chmod +x "$HOME/.local/bin/$f"
@@ -68,11 +68,23 @@ if [ "$CHECK" -eq 0 ] && command -v herdr >/dev/null 2>&1; then
   herdr server reload-config >/dev/null 2>&1 && say "  reloaded running server" || true
 fi
 
-say "== 4. git"
+say "== 4. R&D space (~/src/rnd)"
+if [ -d "$HOME/src/rnd" ]; then
+  say "  present"
+else
+  run mkdir -p "$HOME/src/rnd/topics" "$HOME/src/rnd/roadmap" "$HOME/src/rnd/decisions"
+  run cp "$HERE/rnd-seed/CLAUDE.md" "$HOME/src/rnd/CLAUDE.md"
+  run cp "$HERE/rnd-seed/inbox.md" "$HOME/src/rnd/inbox.md"
+  [ "$CHECK" -eq 0 ] && printf '.harvest/\n' > "$HOME/src/rnd/.gitignore"
+  [ "$CHECK" -eq 0 ] && git -C "$HOME/src/rnd" init -q 2>/dev/null || true
+  say "  seeded + git init"
+fi
+
+say "== 5. git"
 run git config --global fetch.prune true
 say "  fetch.prune = true"
 
-say "== 5. Claude integration"
+say "== 6. Claude integration"
 if [ -d "$HOME/.claude" ]; then
   if command -v herdr >/dev/null 2>&1 && [ "$CHECK" -eq 0 ]; then
     herdr integration status 2>/dev/null | grep -E '^(claude|cursor):' || true
@@ -86,17 +98,23 @@ cat <<EOF
 
 == Manual steps (deliberately not automated) ==
 
-1. Global worktree instruction — paste the block in
-     $HERE/claude/CLAUDE-worktree-block.md
-   into ~/.claude/CLAUDE.md. Claude's permission classifier blocks an agent
-   from editing that file, so this one is yours.
+1. Global instructions — paste BOTH blocks into ~/.claude/CLAUDE.md:
+     $HERE/claude/CLAUDE-worktree-block.md      (worktree isolation)
+     $HERE/claude/CLAUDE-rnd-capture-block.md   (file learnings to ~/src/rnd)
+   Claude's permission classifier blocks an agent from editing that file, so
+   these are yours. Both are load-bearing.
 
 2. Per-project memory (optional) — copy
      $HERE/claude/memory-worktree-before-editing.md
    to ~/.claude/projects/<project>/memory/ and add a line to that MEMORY.md.
    Only needed if you want the instruction scoped per repo instead of global.
 
-3. Hourly git fetch (optional):
+3. Weekly R&D consolidation (optional):
+     cp $HERE/launchd/com.blairmason.rnd-weekly.plist ~/Library/LaunchAgents/
+     launchctl load ~/Library/LaunchAgents/com.blairmason.rnd-weekly.plist
+   Mondays 08:47. Dry-run it first: rnd-weekly --dry
+
+4. Hourly git fetch (optional):
      cp $HERE/launchd/com.blairmason.git-sync-src.plist ~/Library/LaunchAgents/
      launchctl load ~/Library/LaunchAgents/com.blairmason.git-sync-src.plist
    Runs at login and hourly thereafter. Fetch-only by default.

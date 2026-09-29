@@ -306,6 +306,35 @@ herdr-new-tab --bare     # no prompts, just the anchored tab
 herdr-new-tab --print    # show the resolved repo root
 ```
 
+### Why the agent takes a few seconds
+
+`herdr agent start` only succeeds once the new pane has reached an interactive
+shell prompt; until then the server answers `agent_pane_busy`. On a fresh pane
+that takes a while, so the wizard retries for 30s rather than failing.
+
+Measured on one machine, the gap between picking an agent and it reporting
+ready was **7s**, of which:
+
+- ~3s was **shell startup** — an eagerly-sourced version manager and a
+  package manager's shell hook, both of which re-ran on every single shell.
+  Lazy-loading them took that to ~0.2s.
+- the remaining **~5s is the agent's own boot** — loading its MCP servers,
+  plugins and skills before it accepts input. Cutting shell startup by 2.8s
+  only moved the total from 7s to 5s.
+
+So if `alt+t` feels slow, measure before optimising:
+
+```sh
+time zsh -lic exit                       # total shell startup
+zsh -f -c 'zmodload zsh/zprof; source ~/.zshrc; zprof' | head   # functions only
+PS4=$'+%D{%s.%6.}|%N:%i> ' zsh -lixc exit 2>trace.log           # everything else
+```
+
+`zprof` profiles **functions only** — a `$(...)` command substitution or an
+`eval` at the top level is invisible to it. That is exactly where the largest
+cost hid on the machine above, so use the `PS4` trace to catch straight-line
+code.
+
 ### When the agent doesn't start
 
 **A popup vanishes the instant its command exits, taking any error with it.**

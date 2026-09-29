@@ -122,3 +122,12 @@ type = "popup"
 command = "__BIN__/herdr-new-space"
 width = "70%"
 height = "60%"
+
+# Jump to a tab by what it MEANS. herdr's own indexed focus only selects by
+# position (tab N, agent N), which stops being a selector at a few dozen tabs.
+[[keys.command]]
+key = "prefix+alt+j"
+type = "popup"
+command = "__BIN__/herdr-jump"
+width = "80%"
+height = "70%"

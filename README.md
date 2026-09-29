@@ -45,6 +45,7 @@ whole interface; there is nothing else to memorise.
 | `prefix+alt+l` | **l**abel the focused tab (multi-select popup) |
 | `prefix+alt+t` | new **t**ab — name, agent, labels, ready to talk to |
 | `prefix+alt+s` | new **s**pace, pick a repo, at its root |
+| `prefix+alt+j` | **j**ump to a tab by what it means, not its index |
 
 Resync lives inside the label popup as its last entry, so it needs no chord of
 its own.
@@ -89,6 +90,38 @@ work; there just isn't a chord per option to remember.
 `prefix+?` is authoritative; this table can drift, that can't.
 
 ---
+
+## Jumping by meaning
+
+herdr's indexed focus covers three things — tabs (`prefix+1..9`), workspaces
+and agents — and all three select by **position**. At a few dozen sessions
+"agent 7" is not a selector anyone can hold in their head, and there is no
+indexed focus for panes or for anything custom.
+
+`prefix+alt+j` selects by *state* instead. The list is ordered by how much each
+tab wants you:
+
+1. ⭐ the focus tab
+2. anything herdr detects as blocked or waiting **on you**
+3. your own p0 → p1 → p2
+4. everything else, by detected status
+
+Each row shows the marks, the space, the tab name, the agent's status and its
+live task title. Selectors work headlessly too, and repeating one **cycles**
+through matches rather than sticking on the first:
+
+```sh
+herdr-jump              # the picker
+herdr-jump star         # the ⭐ tab
+herdr-jump p0           # cycle p0 tabs
+herdr-jump blocked      # cycle tabs blocked on anything
+herdr-jump attention    # cycle agents herdr says are waiting
+herdr-jump --list       # print the order, jump to nothing
+```
+
+Note the ranking deliberately puts **your** priority above herdr's detected
+status for everything except genuinely-waiting agents: a detected `unknown`
+says nothing, and must not outrank a tab you marked p0 yourself.
 
 ## The layout this config assumes
 

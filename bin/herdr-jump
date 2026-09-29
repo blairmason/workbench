@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Jump to a tab by what it MEANS, not by its index.
+
+herdr's indexed focus covers three things -- tabs, workspaces, agents -- and
+all of them select by position. At a few dozen sessions "agent 7" is not a
+selector anyone can hold in their head, so this selects by state instead: the
+star, the priority, what the tab is blocked on, and the agent status herdr
+detects on its own.
+
+    herdr-jump                 popup picker, ordered by how much it wants you
+    herdr-jump star            the ⭐ tab
+    herdr-jump p0 | p1 | p2    cycle tabs at that priority
+    herdr-jump blocked         cycle tabs blocked on anything
+    herdr-jump attention       cycle agents herdr says are blocked/waiting
+    herdr-jump --list          print the ordered list, jump to nothing
+
+Cycling: repeat a selector to advance through matches rather than sticking on
+the first, so the same chord walks the set.
+"""
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import time
+
+FOCUS = "⭐"
+PRIORITY = {"p0": "\U0001F534", "p1": "\U0001F7E1", "p2": "⚪"}
+BLOCKED = {"review": "\U0001F440", "them": "✋"}
+PRIORITY_BY_MARK = {m: p for p, m in PRIORITY.items()}
+BLOCKED_BY_MARK = {m: b for b, m in BLOCKED.items()}
+SLOT1 = FOCUS + "".join(PRIORITY.values())
+SLOT2 = "".join(BLOCKED.values())
+
+# Where the last jump per selector is remembered, so repeats cycle.
+STATE = pathlib.Path(os.environ.get("XDG_STATE_HOME",
+                                    pathlib.Path.home() / ".local/state")) / "herdr-jump.json"
+
+# Lower sorts first. Only genuinely-waiting agents jump the queue -- an agent
+# herdr says is blocked on you outranks anything you labelled. Everything else
+# sorts by YOUR priority first, because a detected "unknown" says nothing and
+# must not outrank a tab you deliberately marked p0.
+WANTS_YOU = ("blocked", "waiting")
+RANK_STATUS = {"blocked": 0, "waiting": 0, "done": 1, "idle": 2,
+               "working": 3, "unknown": 4}
+
+
+def herdr(*args):
+    return subprocess.run(["herdr", *args], capture_output=True, text=True).stdout
+
+
+def jget(*args):
+    try:
+        return json.loads(herdr(*args))["result"]
+    except (ValueError, KeyError):
+        return None
+
+
+def split_marks(label):
+    label = label or ""
+    s1 = label[:1] if label[:1] in SLOT1 else ""
+    rest = label[len(s1):]
+    s2 = rest[:1] if rest[:1] in SLOT2 else ""
+    return s1, s2, rest[len(s2):].strip()
+
+
+def collect():
+    spaces = {w["workspace_id"]: w.get("label", "?")
+              for w in (jget("workspace", "list") or {}).get("workspaces", [])}
+    agents = {}
+    for a in (jget("agent", "list") or {}).get("agents", []):
+        agents.setdefault(a.get("tab_id"), a)
+
+    rows = []
+    for ws in spaces:
+        for t in (jget("tab", "list", "--workspace", ws) or {}).get("tabs", []):
+            s1, s2, bare = split_marks(t.get("label", ""))
+            a = agents.get(t["tab_id"], {})
+            status = (a.get("agent_status") or t.get("agent_status") or "unknown")
+            prio = "focus" if s1 == FOCUS else PRIORITY_BY_MARK.get(s1, "")
+            rows.append({
+                "tab_id": t["tab_id"], "space": spaces[ws], "name": bare or t.get("label", ""),
+                "s1": s1, "s2": s2, "prio": prio,
+                "blocked": BLOCKED_BY_MARK.get(s2, ""),
+                "status": status,
+                "agent": a.get("agent", ""),
+                "title": (a.get("terminal_title_stripped") or "").strip(),
+            })
+
+    def rank(r):
+        return (0 if r["s1"] == FOCUS else 1,
+                0 if r["status"] in WANTS_YOU else 1,
+                {"p0": 0, "p1": 1, "p2": 2}.get(r["prio"], 3),
+                RANK_STATUS.get(r["status"], 4),
+                r["space"], r["name"])
+    rows.sort(key=rank)
+    return rows
+
+
+def matches(rows, sel):
+    if sel == "star":
+        return [r for r in rows if r["s1"] == FOCUS]
+    if sel in PRIORITY:
+        return [r for r in rows if r["prio"] == sel]
+    if sel == "blocked":
+        return [r for r in rows if r["s2"]]
+    if sel == "attention":
+        return [r for r in rows if r["status"] in ("blocked", "waiting", "done")]
+    return []
+
+
+def load_state():
+    try:
+        return json.loads(STATE.read_text())
+    except Exception:
+        return {}
+
+
+def save_state(st):
+    try:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(st))
+    except OSError:
+        pass
+
+
+def cycle_pick(sel, hits):
+    """Advance through hits when the same selector is used again soon."""
+    st = load_state()
+    prev = st.get(sel) or {}
+    ids = [h["tab_id"] for h in hits]
+    idx = 0
+    if prev.get("last") in ids and time.time() - prev.get("at", 0) < 300:
+        idx = (ids.index(prev["last"]) + 1) % len(ids)
+    st[sel] = {"last": ids[idx], "at": time.time()}
+    save_state(st)
+    return hits[idx]
+
+
+def line(r):
+    mark = (r["s1"] + r["s2"]) or "  "
+    bits = [f"{mark:<3}", f"{r['space']:<18}", f"{r['name'][:34]:<34}",
+            f"{r['status']:<8}"]
+    if r["title"] and r["title"] != r["name"]:
+        bits.append(r["title"][:40])
+    return " ".join(bits).rstrip()
+
+
+def jump(r):
+    herdr("tab", "focus", r["tab_id"])
+    print(f"{r['tab_id']}  {r['space']} / {r['name']}")
+
+
+def main():
+    argv = sys.argv[1:]
+    rows = collect()
+    if not rows:
+        print("no tabs", file=sys.stderr)
+        return 1
+
+    if "--list" in argv:
+        for r in rows:
+            print(line(r))
+        return 0
+
+    if argv and argv[0] in ("star", "blocked", "attention", *PRIORITY):
+        sel = argv[0]
+        hits = matches(rows, sel)
+        if not hits:
+            print(f"nothing matches {sel}", file=sys.stderr)
+            return 1
+        jump(cycle_pick(sel, hits))
+        return 0
+
+    lines = [line(r) for r in rows]
+    if shutil.which("fzf"):
+        proc = subprocess.run(
+            ["fzf", "--reverse", "--height=100%", "--prompt=jump> ",
+             "--header", "⭐ first, then whoever is waiting on you"],
+            input="\n".join(lines), capture_output=True, text=True)
+        choice = proc.stdout.strip()
+        if not choice:
+            return 130
+        jump(rows[lines.index(choice)])
+        return 0
+
+    for i, l in enumerate(lines, 1):
+        print(f"{i:3}. {l}")
+    try:
+        n = int(input("number> ").strip())
+        jump(rows[n - 1])
+    except (ValueError, IndexError, EOFError, KeyboardInterrupt):
+        return 130
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

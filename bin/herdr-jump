@@ -30,8 +30,8 @@ PRIORITY = {"p0": "\U0001F534", "p1": "\U0001F7E1", "p2": "⚪"}
 BLOCKED = {"review": "\U0001F440", "them": "✋"}
 PRIORITY_BY_MARK = {m: p for p, m in PRIORITY.items()}
 BLOCKED_BY_MARK = {m: b for b, m in BLOCKED.items()}
-SLOT1 = FOCUS + "".join(PRIORITY.values())
-SLOT2 = "".join(BLOCKED.values())
+P_MARKS = "".join(PRIORITY.values())
+B_MARKS = "".join(BLOCKED.values())
 
 # Where the last jump per selector is remembered, so repeats cycle.
 STATE = pathlib.Path(os.environ.get("XDG_STATE_HOME",
@@ -58,14 +58,16 @@ def jget(*args):
 
 
 def split_marks(label):
+    """-> (focus, priority, blockers, bare). Three independent slots."""
     label = label or ""
-    s1 = label[:1] if label[:1] in SLOT1 else ""
-    rest = label[len(s1):]
-    # slot 2 may carry several marks (blocked on a review AND a person)
+    foc = label[:1] if label[:1] == FOCUS else ""
+    rest = label[len(foc):]
+    prio = rest[:1] if rest[:1] in P_MARKS else ""
+    rest = rest[len(prio):]
     i = 0
-    while i < len(rest) and rest[i] in SLOT2:
+    while i < len(rest) and rest[i] in B_MARKS:
         i += 1
-    return s1, rest[:i], rest[i:].strip()
+    return foc, prio, rest[:i], rest[i:].strip()
 
 
 def collect():
@@ -78,21 +80,21 @@ def collect():
     rows = []
     for ws in spaces:
         for t in (jget("tab", "list", "--workspace", ws) or {}).get("tabs", []):
-            s1, s2, bare = split_marks(t.get("label", ""))
+            foc, prio_m, blk, bare = split_marks(t.get("label", ""))
             a = agents.get(t["tab_id"], {})
             status = (a.get("agent_status") or t.get("agent_status") or "unknown")
-            prio = "focus" if s1 == FOCUS else PRIORITY_BY_MARK.get(s1, "")
+            prio = PRIORITY_BY_MARK.get(prio_m, "")
             rows.append({
                 "tab_id": t["tab_id"], "space": spaces[ws], "name": bare or t.get("label", ""),
-                "s1": s1, "s2": s2, "prio": prio,
-                "blocked": "+".join(BLOCKED_BY_MARK.get(m, "") for m in s2),
+                "foc": foc, "prio_m": prio_m, "blk": blk, "prio": prio,
+                "blocked": "+".join(BLOCKED_BY_MARK.get(m, "") for m in blk),
                 "status": status,
                 "agent": a.get("agent", ""),
                 "title": (a.get("terminal_title_stripped") or "").strip(),
             })
 
     def rank(r):
-        return (0 if r["s1"] == FOCUS else 1,
+        return (0 if r["foc"] else 1,
                 0 if r["status"] in WANTS_YOU else 1,
                 {"p0": 0, "p1": 1, "p2": 2}.get(r["prio"], 3),
                 RANK_STATUS.get(r["status"], 4),
@@ -103,11 +105,11 @@ def collect():
 
 def matches(rows, sel):
     if sel == "star":
-        return [r for r in rows if r["s1"] == FOCUS]
+        return [r for r in rows if r["foc"]]
     if sel in PRIORITY:
         return [r for r in rows if r["prio"] == sel]
     if sel == "blocked":
-        return [r for r in rows if r["s2"]]
+        return [r for r in rows if r["blk"]]
     if sel == "attention":
         return [r for r in rows if r["status"] in ("blocked", "waiting", "done")]
     return []
@@ -142,8 +144,8 @@ def cycle_pick(sel, hits):
 
 
 def line(r):
-    mark = (r["s1"] + r["s2"]) or "  "
-    bits = [f"{mark:<3}", f"{r['space']:<18}", f"{r['name'][:34]:<34}",
+    mark = (r["foc"] + r["prio_m"] + r["blk"]) or "  "
+    bits = [f"{mark:<5}", f"{r['space']:<18}", f"{r['name'][:34]:<34}",
             f"{r['status']:<8}"]
     if r["title"] and r["title"] != r["name"]:
         bits.append(r["title"][:40])

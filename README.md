@@ -27,8 +27,15 @@ Two independent slots, written as emoji at the front of the tab name:
 
 | Slot | Marks | How many |
 |---|---|---|
-| 1 — focus or priority | ⭐ focus · 🔴 p0 · 🟡 p1 · ⚪ p2 | **one** — a thing has one priority |
-| 2 — blocked on | 👀 review · ✋ someone else | **any** — they accumulate |
+| **focus** | ⭐ | **one per session** — what you're on right now |
+| **priority** | 🔴 p0 · 🟡 p1 · ⚪ p2 | **one per tab** — standing importance |
+| **blocked on** | 👀 review · ✋ someone else | **any** — they accumulate |
+
+**Focus and priority are separate axes, on purpose.** Priority is how much a
+thing matters overall; focus is what you are on *this minute*. Working on a p2
+for half an hour while p0s exist is normal, so starring a tab must not destroy
+its priority. `⭐⚪👀 spike` is all three at once: focused now, standing p2,
+waiting on a review.
 
 They compose, so `⭐👀 add-search-index` is the current focus, blocked on a
 review.

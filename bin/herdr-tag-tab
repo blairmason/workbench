@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
-"""Tag the focused herdr tab with focus/priority/blocked state.
+"""Tag the focused herdr tab with focus / priority / blocked state.
 
-Two independent slots are encoded as emoji marks at the front of the tab name:
+Three INDEPENDENT slots, written as emoji at the front of the tab name:
 
-    slot 1 (focus or priority)   ⭐ focus   🔴 p0   🟡 p1   ⚪ p2
-    slot 2 (blocked on)          👀 review  ✋ them
+    focus     ⭐                       at most one tab in the whole session
+    priority  🔴 p0  🟡 p1  ⚪ p2      at most one per tab
+    blocked   👀 review  ✋ them       any number per tab
 
-    "⭐👀 dp-140-composer"  = the current focus, blocked on a review
-    "🟡 null-integrator"    = p1, not blocked
+    "⭐⚪👀 spike"   focused right now, standing priority p2, waiting on a review
+    "🔴 migration"  p0, but not what you're doing this minute
 
-The tab NAME is the source of truth. herdr persists tab names across restarts
-but not pane metadata, so `resync` rebuilds every $focus/$p/$blocked token
-from the marks — see the note at the bottom of this file.
+Focus and priority are deliberately separate axes. Priority is how much a thing
+matters overall; focus is what you are on *now*. Spending half an hour on a p2
+while p0s exist is normal, and starring it must not destroy its p2.
+
+The tab NAME is the source of truth: herdr persists tab names across restarts
+but not pane metadata, so `resync` rebuilds every token from the marks.
 
 Usage:
-    herdr-tag-tab focus            ⭐ exclusive: demotes any previous focus to p0
-    herdr-tag-tab p0 | p1 | p2     set priority, drops ⭐ from this tab
-    herdr-tag-tab review | them    mark what it's blocked on
-    herdr-tag-tab unblock          clear slot 2, keep priority
-    herdr-tag-tab clear            clear both slots and all tokens
+    herdr-tag-tab                  popup picker (multi-select)
+    herdr-tag-tab focus|unfocus    ⭐ on/off; focus is exclusive across tabs
+    herdr-tag-tab p0|p1|p2         set standing priority
+    herdr-tag-tab unprioritise     clear the priority, keep everything else
+    herdr-tag-tab review|them      add a blocker
+    herdr-tag-tab unblock          clear all blockers
+    herdr-tag-tab clear            clear all three slots
     herdr-tag-tab resync           rebuild tokens from marks on every tab
+    herdr-tag-tab ... --tab <id>   act on a specific tab, not the focused one
 """
 import json
 import re
@@ -33,13 +40,12 @@ BLOCKED = {"review": "\U0001F440", "them": "✋"}
 
 PRIORITY_BY_MARK = {m: p for p, m in PRIORITY.items()}
 BLOCKED_BY_MARK = {m: b for b, m in BLOCKED.items()}
+P_MARKS = "".join(PRIORITY.values())
+B_MARKS = "".join(BLOCKED.values())
 
-SLOT1 = FOCUS + "".join(PRIORITY.values())
-SLOT2 = "".join(BLOCKED.values())
-# Marks are position-significant: slot 1, then slot 2, then the real name.
-# Slot 1 holds at most one mark (a thing has one priority). Slot 2 holds any
-# number -- being blocked on a review AND on a person is a real state.
-MARKS_RE = re.compile(r"^([" + SLOT1 + r"]?)([" + SLOT2 + r"]*)\s*(.*)$", re.S)
+# Position-significant: focus, then priority, then any number of blockers.
+MARKS_RE = re.compile(
+    r"^(" + FOCUS + r"?)([" + P_MARKS + r"]?)([" + B_MARKS + r"]*)\s*(.*)$", re.S)
 
 
 def herdr(*args, capture=True):
@@ -55,17 +61,18 @@ def jget(*args):
 
 
 def split_marks(label):
-    """-> (slot1_mark, slot2_mark, bare_name)"""
+    """-> (focus, priority, blockers, bare_name)"""
     m = MARKS_RE.match(label or "")
-    return (m.group(1), m.group(2), m.group(3).strip()) if m else ("", "", label or "")
+    if not m:
+        return "", "", "", label or ""
+    return m.group(1), m.group(2), m.group(3), m.group(4).strip()
 
 
 def all_tabs():
-    spaces = (jget("workspace", "list") or {}).get("workspaces", [])
     out = []
-    for w in spaces:
-        tabs = (jget("tab", "list", "--workspace", w["workspace_id"]) or {}).get("tabs", [])
-        out.extend(tabs)
+    for w in (jget("workspace", "list") or {}).get("workspaces", []):
+        out.extend((jget("tab", "list", "--workspace", w["workspace_id"]) or {})
+                   .get("tabs", []))
     return out
 
 
@@ -76,103 +83,99 @@ def focused_tab_id():
 
 
 def panes_of(tab_id):
-    panes = (jget("pane", "list") or {}).get("panes", [])
-    return [p["pane_id"] for p in panes if p.get("tab_id") == tab_id]
+    return [p["pane_id"] for p in (jget("pane", "list") or {}).get("panes", [])
+            if p.get("tab_id") == tab_id]
 
 
-def write_tokens(tab_id, slot1, slot2):
-    """Make pane tokens match the marks. Cleared tokens are omitted, not blanked."""
-    focus = "NOW" if slot1 == FOCUS else None
-    # Values stay as "p0"/"p1"/"p2" and are matched with `equals` rules --
-    # numeric gt/lt rules would depend on herdr coercing a string token value.
-    prio = "p0" if slot1 == FOCUS else PRIORITY_BY_MARK.get(slot1)
-    # slot2 may carry several marks; the token joins their names so a
-    # `contains` rule still colours it.
-    names = [BLOCKED_BY_MARK[m] for m in (slot2 or "") if m in BLOCKED_BY_MARK]
-    blocked = "+".join(names) if names else None
-
+def write_tokens(tab_id, foc, prio, blocked):
+    """Mirror the marks into pane tokens. Focus and priority are independent."""
+    names = [BLOCKED_BY_MARK[m] for m in (blocked or "") if m in BLOCKED_BY_MARK]
+    values = {
+        "focus": "NOW" if foc else None,
+        "p": PRIORITY_BY_MARK.get(prio),
+        "blocked": "+".join(names) if names else None,
+    }
     for pid in panes_of(tab_id):
         args = ["pane", "report-metadata", pid, "--source", "herdr-tag-tab"]
-        for name, val in (("focus", focus), ("p", prio), ("blocked", blocked)):
+        for name, val in values.items():
             args += ["--token", f"{name}={val}"] if val else ["--clear-token", name]
         herdr(*args, capture=False)
 
 
-def apply(tab_id, label, slot1=None, slot2=None):
-    cur1, cur2, bare = split_marks(label)
-    new1 = cur1 if slot1 is None else slot1
-    new2 = cur2 if slot2 is None else slot2
-    name = f"{new1}{new2} {bare}".strip() or bare or tab_id.split(":")[-1]
+def apply(tab_id, label, foc=None, prio=None, blocked=None):
+    cf, cp, cb, bare = split_marks(label)
+    nf = cf if foc is None else foc
+    np = cp if prio is None else prio
+    nb = cb if blocked is None else blocked
+    name = f"{nf}{np}{nb} {bare}".strip() or bare or tab_id.split(":")[-1]
     herdr("tab", "rename", tab_id, name, capture=False)
-    write_tokens(tab_id, new1, new2)
+    write_tokens(tab_id, nf, np, nb)
     return name
+
+
+def clear_focus_elsewhere(tab_id):
+    """Only one tab is 'now'. Drop the star from others, keep their priority."""
+    for t in all_tabs():
+        if t["tab_id"] == tab_id:
+            continue
+        f, _, _, _ = split_marks(t.get("label", ""))
+        if f:
+            apply(t["tab_id"], t["label"], foc="")
 
 
 def resync_all():
     n = 0
     for t in all_tabs():
-        s1, s2, _ = split_marks(t.get("label", ""))
-        if s1 or s2:
-            write_tokens(t["tab_id"], s1, s2)
+        f, p, b, _ = split_marks(t.get("label", ""))
+        if f or p or b:
+            write_tokens(t["tab_id"], f, p, b)
             n += 1
     return n
 
 
-def set_focus_exclusive(tab_id):
-    """Take the star off whatever holds it, demoting that tab to p0."""
-    for t in all_tabs():
-        if t["tab_id"] == tab_id:
-            continue
-        s1, s2, _ = split_marks(t.get("label", ""))
-        if s1 == FOCUS:
-            apply(t["tab_id"], t["label"], slot1=PRIORITY["p0"], slot2=s2)
-
-
-# (display, slot, value) -- slot 1 is focus/priority, slot 2 is the blocker.
+# (display, slot, value); slot is focus | prio | blocked | meta
 MENU = [
-    (f"{FOCUS}  focus          — the one thing that matters now", 1, FOCUS),
-    (f"{PRIORITY['p0']}  p0             — next up", 1, PRIORITY["p0"]),
-    (f"{PRIORITY['p1']}  p1", 1, PRIORITY["p1"]),
-    (f"{PRIORITY['p2']}  p2             — background", 1, PRIORITY["p2"]),
-    (f"{BLOCKED['review']}  blocked        — waiting on a review", 2, BLOCKED["review"]),
-    (f"{BLOCKED['them']}  blocked        — waiting on someone", 2, BLOCKED["them"]),
-    ("·  clear priority", 1, ""),
-    ("·  clear blocked", 2, ""),
-    ("↻  resync all tabs — after a restart, rebuild colours from the marks", 0, None),
+    (f"{FOCUS}  focus          — what you're on right now", "focus", FOCUS),
+    (f"{PRIORITY['p0']}  p0             — standing priority", "prio", PRIORITY["p0"]),
+    (f"{PRIORITY['p1']}  p1", "prio", PRIORITY["p1"]),
+    (f"{PRIORITY['p2']}  p2             — background", "prio", PRIORITY["p2"]),
+    (f"{BLOCKED['review']}  blocked        — waiting on a review", "blocked", BLOCKED["review"]),
+    (f"{BLOCKED['them']}  blocked        — waiting on someone", "blocked", BLOCKED["them"]),
+    ("·  clear focus", "focus", ""),
+    ("·  clear priority", "prio", ""),
+    ("·  clear blocked", "blocked", ""),
+    ("↻  resync all tabs — rebuild colours from the marks", "meta", None),
 ]
 
 
-def describe(slot1, slot2):
+def describe(foc, prio, blocked):
     bits = []
-    if slot1 == FOCUS:
+    if foc:
         bits.append("⭐ focus")
-    elif slot1 in PRIORITY_BY_MARK:
-        bits.append(f"{slot1} {PRIORITY_BY_MARK[slot1]}")
-    if slot2:
-        names = "+".join(BLOCKED_BY_MARK.get(m, "?") for m in slot2)
-        bits.append(f"{slot2} blocked:{names}")
+    if prio in PRIORITY_BY_MARK:
+        bits.append(f"{prio} {PRIORITY_BY_MARK[prio]}")
+    if blocked:
+        bits.append(f"{blocked} blocked:"
+                    + "+".join(BLOCKED_BY_MARK.get(m, "?") for m in blocked))
     return "  ".join(bits) if bits else "untagged"
 
 
 def pick(tab_id, label):
-    """Popup multi-select: choose one from either slot, or both, or neither."""
-    cur1, cur2, bare = split_marks(label)
-    header = (f"{bare or tab_id}\nnow: {describe(cur1, cur2)}"
+    cf, cp, cb, bare = split_marks(label)
+    header = (f"{bare or tab_id}\nnow: {describe(cf, cp, cb)}"
               "   ·   space or tab marks ✓   ·   enter applies")
-
     lines = [d for d, _, _ in MENU]
+
     if shutil.which("fzf"):
         proc = subprocess.run(
             # fzf binds only Tab to toggle by default; space is bound here so
-            # the header's promise is true. The list is short, so losing space
-            # as a query character costs nothing.
+            # the header's promise is true.
             ["fzf", "--multi", "--reverse", "--height=100%",
-             "--marker=✓ ", "--pointer=▸",
-             "--bind", "space:toggle+down",
+             "--marker=✓ ", "--pointer=▸", "--bind", "space:toggle+down",
              "--prompt=label> ", "--header", header],
             input="\n".join(lines), capture_output=True, text=True)
         chosen = [l for l in proc.stdout.splitlines() if l.strip()]
-        if proc.returncode not in (0,) and not chosen:
+        if not chosen:
             return 130
     else:
         print(header + "\n")
@@ -192,42 +195,39 @@ def pick(tab_id, label):
                 print(f"ignoring: {part.strip()}", file=sys.stderr)
 
     by_display = {d: (slot, val) for d, slot, val in MENU}
-    slot1 = slot2 = None
+    foc = prio = blocked = None
     do_resync = False
     for c in chosen:
         hit = by_display.get(c)
         if not hit:
             continue
         slot, val = hit
-        if slot == 0:
+        if slot == "meta":
             do_resync = True
-            continue
-        if slot == 1:
-            # One priority only -- first pick wins.
-            if slot1 is None:
-                slot1 = val
-        elif slot == 2:
-            if val == "":          # "clear blocked" wipes the whole slot
-                slot2 = ""
-            elif slot2 == "":
-                continue           # an explicit clear beats additions
+        elif slot == "focus" and foc is None:
+            foc = val
+        elif slot == "prio" and prio is None:
+            prio = val
+        elif slot == "blocked":
+            if val == "":
+                blocked = ""            # an explicit clear wins
+            elif blocked == "":
+                continue
             else:
-                slot2 = (slot2 or "") + val
+                blocked = (blocked or "") + val
 
     if do_resync:
         print(f"resynced {resync_all()} tagged tab(s)")
-    if slot1 is None and slot2 is None:
+    if foc is None and prio is None and blocked is None:
         return 0 if do_resync else 130
-    if slot1 == FOCUS:
-        set_focus_exclusive(tab_id)
-    print(apply(tab_id, label, slot1=slot1, slot2=slot2))
+    if foc:
+        clear_focus_elsewhere(tab_id)
+    print(apply(tab_id, label, foc=foc, prio=prio, blocked=blocked))
     return 0
 
 
 def main():
     argv = sys.argv[1:]
-    # --tab <id> targets a specific tab instead of whatever is focused, so a
-    # caller can label a tab it just created without stealing focus first.
     explicit = None
     if "--tab" in argv:
         i = argv.index("--tab")
@@ -244,22 +244,27 @@ def main():
     if not tab_id:
         print("no focused tab", file=sys.stderr)
         return 1
-    tab = (jget("tab", "get", tab_id) or {}).get("tab", {})
-    label = tab.get("label", "")
+    label = ((jget("tab", "get", tab_id) or {}).get("tab", {})).get("label", "")
 
     if cmd in ("pick", ""):
         return pick(tab_id, label)
     if cmd == "focus":
-        set_focus_exclusive(tab_id)
-        print(apply(tab_id, label, slot1=FOCUS))
+        clear_focus_elsewhere(tab_id)
+        print(apply(tab_id, label, foc=FOCUS))
+    elif cmd == "unfocus":
+        print(apply(tab_id, label, foc=""))
     elif cmd in PRIORITY:
-        print(apply(tab_id, label, slot1=PRIORITY[cmd]))
+        print(apply(tab_id, label, prio=PRIORITY[cmd]))
+    elif cmd in ("unprioritise", "unprioritize"):
+        print(apply(tab_id, label, prio=""))
     elif cmd in BLOCKED:
-        print(apply(tab_id, label, slot2=BLOCKED[cmd]))
+        cur = split_marks(label)[2]
+        add = BLOCKED[cmd]
+        print(apply(tab_id, label, blocked=cur if add in cur else cur + add))
     elif cmd == "unblock":
-        print(apply(tab_id, label, slot2=""))
+        print(apply(tab_id, label, blocked=""))
     elif cmd == "clear":
-        print(apply(tab_id, label, slot1="", slot2=""))
+        print(apply(tab_id, label, foc="", prio="", blocked=""))
     else:
         print(__doc__, file=sys.stderr)
         return 2

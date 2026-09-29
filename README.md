@@ -103,6 +103,55 @@ work; there just isn't a chord per option to remember.
 
 ---
 
+## Moving a machine's state to another machine
+
+`herdr-migrate` carries the layout **and** the agent conversations, so the
+other machine comes up with the same spaces, the same tab names and marks, and
+each tab resumed into the session it held here.
+
+```sh
+# here
+herdr-migrate export                 # -> herdr-state-<timestamp>/
+herdr-migrate export --all-sessions  # every transcript, not just open tabs
+herdr-migrate export --no-transcripts  # layout only; no conversation content
+
+# copy the directory across, then there
+herdr-migrate import  herdr-state-<timestamp>
+herdr-migrate restore herdr-state-<timestamp> --dry-run
+herdr-migrate restore herdr-state-<timestamp>
+```
+
+`export` reads the **live** session rather than herdr's on-disk snapshot, so it
+reflects the state you can see. `import` only ever **adds** transcripts —
+anything already present is skipped, never overwritten. `restore` recreates
+spaces and tabs, then starts each agent with `--resume <session>`.
+
+### Constraints worth knowing before you rely on it
+
+**Both machines need the same home directory and repo paths.** Agent project
+directories are keyed by an encoded cwd (`-Users-you-src-backend`), and a
+space's identity is its directory. `import` compares the manifest's home
+against the local one and **refuses** rather than quietly installing sessions
+nothing can find. Different paths need a rewriting step this tool doesn't do.
+
+**A repo that isn't cloned on the far side is skipped**, with a message, rather
+than opening a broken space.
+
+**Restore is paced (`--pace`, default 1.5s).** Creating many spaces or tabs in
+a tight loop races herdr's pane registry: shells exit with status 1, the server
+logs `PaneDied for unknown pane`, and spaces disappear — *including
+pre-existing ones*. Each creation is followed by a pause and an existence
+check, and the run tells you to slow down if a space vanishes.
+
+**Transcripts are the whole conversation.** They contain everything those
+sessions discussed. `--no-transcripts` exports the layout alone if the content
+shouldn't leave the machine.
+
+**Agent names must be unique**, lowercase `[a-z0-9_-]`, ≤32 characters.
+Reusing the agent kind as the name fails with `agent_name_taken` on the second
+agent of that kind, so both this and the new-tab wizard derive a name from the
+pane id.
+
 ## Jumping by meaning
 
 herdr's indexed focus covers three things — tabs (`prefix+1..9`), workspaces

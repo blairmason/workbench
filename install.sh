@@ -50,7 +50,7 @@ esac
 
 say "== 2. helper scripts -> $BIN_DIR"
 run mkdir -p "$BIN_DIR"
-for f in herdr-tag-tab herdr-new-tab herdr-new-space herdr-jump; do
+for f in herdr-tag-tab herdr-new-tab herdr-new-space herdr-jump herdr-migrate; do
   backup "$BIN_DIR/$f"
   run cp "$HERE/bin/$f" "$BIN_DIR/$f"
   run chmod +x "$BIN_DIR/$f"

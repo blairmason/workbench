@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""Move a herdr working state between machines: layout + agent transcripts.
+
+    herdr-migrate export [-o DIR] [--all-sessions] [--no-transcripts]
+    herdr-migrate import <DIR>
+    herdr-migrate restore <DIR> [--dry-run] [--pace SECONDS]
+
+export   Reads the LIVE session (not the on-disk snapshot) and writes a
+         manifest of spaces, tab names and the agent session each tab holds,
+         plus a copy of those agents' transcripts.
+import   Copies transcripts into this machine's agent project directories,
+         skipping any that already exist. Never overwrites.
+restore  Recreates the spaces and tabs from the manifest and starts each
+         agent resumed into its original session.
+
+Assumes both machines use the SAME home directory and repo paths: agent
+project directories are keyed by an encoded cwd, and a herdr space's identity
+is its directory. `import` refuses to run if the manifest's home differs,
+rather than silently producing sessions nothing can find.
+
+Restore is paced on purpose. Creating many spaces or tabs in a tight loop can
+race herdr's pane registry -- shells exit with status 1, the server logs
+"PaneDied for unknown pane", and spaces vanish, including pre-existing ones.
+Each creation is followed by a pause and an existence check.
+"""
+import argparse
+import json
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = pathlib.Path.home()
+PROJECTS = HOME / ".claude" / "projects"
+MANIFEST = "manifest.json"
+TRANSCRIPTS = "transcripts"
+
+
+def herdr(*args, with_err=False):
+    r = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    return (r.stdout + r.stderr) if with_err else r.stdout
+
+
+def jget(*args):
+    try:
+        return json.loads(herdr(*args))["result"]
+    except (ValueError, KeyError):
+        return None
+
+
+def repo_root(path):
+    try:
+        r = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"], capture_output=True, text=True, timeout=5)
+        common = r.stdout.strip()
+    except Exception:
+        return None
+    p = pathlib.Path(common) if common else None
+    return str(p.parent) if p and p.name == ".git" else None
+
+
+def find_transcript(session_id):
+    """-> (project_dir_name, path) for a session id, or (None, None)."""
+    if not PROJECTS.is_dir():
+        return None, None
+    for proj in PROJECTS.iterdir():
+        f = proj / f"{session_id}.jsonl"
+        if f.is_file():
+            return proj.name, f
+    return None, None
+
+
+# ---------------------------------------------------------------- export
+
+def cmd_export(args):
+    spaces = (jget("workspace", "list") or {}).get("workspaces", [])
+    panes = (jget("pane", "list") or {}).get("panes", [])
+    by_tab = {}
+    for p in panes:
+        by_tab.setdefault(p.get("tab_id"), []).append(p)
+
+    out = pathlib.Path(args.out or f"herdr-state-{time.strftime('%Y%m%d-%H%M%S')}")
+    (out / TRANSCRIPTS).mkdir(parents=True, exist_ok=True)
+
+    manifest = {"version": 1, "exported_at": time.strftime("%FT%T"),
+                "home": str(HOME), "spaces": []}
+    copied = skipped = missing = 0
+    total_bytes = 0
+
+    for w in spaces:
+        ws_id = w["workspace_id"]
+        tabs = (jget("tab", "list", "--workspace", ws_id) or {}).get("tabs", [])
+        # A space's directory: the repo root its panes agree on, else any cwd.
+        cwds = [p.get("cwd") for t in tabs for p in by_tab.get(t["tab_id"], [])
+                if p.get("cwd")]
+        root = next((repo_root(c) for c in cwds if repo_root(c)), None) \
+            or (cwds[0] if cwds else str(HOME))
+
+        entry = {"label": w.get("label"), "cwd": root, "tabs": []}
+        for t in tabs:
+            tps = by_tab.get(t["tab_id"], [])
+            # Only the first pane per tab is carried; splits are not restored.
+            p = tps[0] if tps else {}
+            sess = (p.get("agent_session") or {}).get("value")
+            tab = {"label": t.get("label"), "cwd": p.get("cwd") or root,
+                   "agent": p.get("agent"), "session_id": sess,
+                   "project_dir": None}
+            if sess and not args.no_transcripts:
+                pdir, path = find_transcript(sess)
+                if path:
+                    tab["project_dir"] = pdir
+                    dest = out / TRANSCRIPTS / pdir
+                    dest.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, dest / path.name)
+                    copied += 1
+                    total_bytes += path.stat().st_size
+                else:
+                    missing += 1
+            entry["tabs"].append(tab)
+        manifest["spaces"].append(entry)
+
+    if args.all_sessions and not args.no_transcripts:
+        for proj in PROJECTS.iterdir() if PROJECTS.is_dir() else []:
+            for f in proj.glob("*.jsonl"):
+                dest = out / TRANSCRIPTS / proj.name / f.name
+                if dest.exists():
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+                copied += 1
+                total_bytes += f.stat().st_size
+
+    (out / MANIFEST).write_text(json.dumps(manifest, indent=2))
+    tabs_n = sum(len(s["tabs"]) for s in manifest["spaces"])
+    print(f"exported to {out}")
+    print(f"  {len(manifest['spaces'])} spaces, {tabs_n} tabs")
+    print(f"  {copied} transcripts ({total_bytes / 1024 / 1024:.0f} MB)"
+          + (f", {missing} referenced but not found" if missing else ""))
+    print(f"\ncopy the whole directory across, then on the other machine:")
+    print(f"  herdr-migrate import {out.name}")
+    print(f"  herdr-migrate restore {out.name}")
+    return 0
+
+
+# ---------------------------------------------------------------- import
+
+def cmd_import(args):
+    src = pathlib.Path(args.bundle)
+    man = json.loads((src / MANIFEST).read_text())
+    if man.get("home") != str(HOME):
+        print(f"manifest was exported under home {man.get('home')!r}, this "
+              f"machine is {str(HOME)!r}.\nAgent project directories are keyed "
+              "by an encoded cwd, so the sessions would not be found.",
+              file=sys.stderr)
+        return 1
+
+    added = skipped = 0
+    tdir = src / TRANSCRIPTS
+    for proj in sorted(tdir.iterdir()) if tdir.is_dir() else []:
+        dest_dir = PROJECTS / proj.name
+        for f in sorted(proj.glob("*.jsonl")):
+            dest = dest_dir / f.name
+            if dest.exists():
+                skipped += 1
+                continue
+            if args.dry_run:
+                print(f"  would add {proj.name}/{f.name}")
+            else:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+            added += 1
+    print(f"imported: {added} new, {skipped} already present"
+          + ("  (dry run)" if args.dry_run else ""))
+    return 0
+
+
+# ---------------------------------------------------------------- restore
+
+def live_spaces():
+    return {w.get("label"): w["workspace_id"]
+            for w in (jget("workspace", "list") or {}).get("workspaces", [])}
+
+
+def agent_name(kind, pane_id):
+    """Unique, lowercase, [a-z0-9_-], <=32 -- herdr rejects anything else."""
+    return re.sub(r"[^a-z0-9_-]", "-", f"{kind}-{pane_id}".lower())[:32]
+
+
+def start_agent(kind, pane_id, session_id, deadline_s=30):
+    cmd = ["agent", "start", agent_name(kind, pane_id), "--kind", kind,
+           "--pane", pane_id, "--timeout", "90000"]
+    if session_id:
+        cmd += ["--", "--resume", session_id]
+    end = time.time() + deadline_s
+    res = ""
+    while time.time() < end:
+        res = herdr(*cmd, with_err=True)
+        if "interactive_ready" in res:
+            return True, res
+        # A brand-new pane is not at a prompt yet; anything else is terminal.
+        if "agent_pane_busy" not in res:
+            return False, res
+        time.sleep(1.0)
+    return False, res
+
+
+def cmd_restore(args):
+    src = pathlib.Path(args.bundle)
+    man = json.loads((src / MANIFEST).read_text())
+    pace = args.pace
+    made_spaces = made_tabs = resumed = failed = 0
+
+    for sp in man["spaces"]:
+        label, cwd = sp["label"], sp["cwd"]
+        if not pathlib.Path(cwd).is_dir():
+            print(f"skip space {label!r}: {cwd} does not exist here")
+            continue
+        existing = live_spaces()
+        if label in existing:
+            ws = existing[label]
+            print(f"space {label!r} already open ({ws})")
+        elif args.dry_run:
+            print(f"would create space {label!r} at {cwd}")
+            ws = None
+        else:
+            r = jget("workspace", "create", "--cwd", cwd, "--label", label,
+                     "--no-focus")
+            ws = (r or {}).get("workspace", {}).get("workspace_id")
+            if not ws:
+                print(f"could not create space {label!r}")
+                continue
+            made_spaces += 1
+            print(f"created space {label!r} ({ws})")
+            time.sleep(pace)
+            if label not in live_spaces():
+                print(f"  space {label!r} vanished after creation — "
+                      "slow down with --pace")
+                continue
+
+        for tab in sp["tabs"]:
+            tcwd = tab.get("cwd") if pathlib.Path(
+                tab.get("cwd") or "").is_dir() else cwd
+            if args.dry_run:
+                print(f"  would create tab {tab['label']!r}"
+                      + (f" resumed into {tab['session_id'][:8]}"
+                         if tab.get("session_id") else ""))
+                continue
+            r = jget("tab", "create", "--workspace", ws, "--cwd", tcwd,
+                     "--label", tab["label"] or "", "--no-focus")
+            if not r:
+                print(f"  tab {tab['label']!r}: create failed")
+                failed += 1
+                continue
+            made_tabs += 1
+            pane = r["root_pane"]["pane_id"]
+            time.sleep(pace)
+
+            kind = tab.get("agent")
+            sid = tab.get("session_id")
+            if not kind:
+                continue
+            if sid and not find_transcript(sid)[1]:
+                print(f"  tab {tab['label']!r}: transcript {sid[:8]} missing, "
+                      "starting fresh")
+                sid = None
+            ok, res = start_agent(kind, pane, sid)
+            if ok:
+                resumed += 1
+                print(f"  {tab['label']!r} -> {kind}"
+                      + (f" resumed {sid[:8]}" if sid else " (fresh)"))
+            else:
+                failed += 1
+                print(f"  {tab['label']!r}: agent start failed: "
+                      f"{res.strip()[:140]}")
+
+    if not args.dry_run:
+        tagger = shutil.which("herdr-tag-tab")
+        if tagger:
+            subprocess.run([tagger, "resync"])
+    print(f"\n{made_spaces} spaces, {made_tabs} tabs, {resumed} agents started, "
+          f"{failed} failed")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    e = sub.add_parser("export")
+    e.add_argument("-o", "--out")
+    e.add_argument("--all-sessions", action="store_true",
+                   help="include every transcript, not just those in open tabs")
+    e.add_argument("--no-transcripts", action="store_true",
+                   help="layout only; no conversation content leaves the machine")
+    e.set_defaults(fn=cmd_export)
+
+    i = sub.add_parser("import")
+    i.add_argument("bundle")
+    i.add_argument("--dry-run", action="store_true")
+    i.set_defaults(fn=cmd_import)
+
+    r = sub.add_parser("restore")
+    r.add_argument("bundle")
+    r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--pace", type=float, default=1.5,
+                   help="seconds between creations (default 1.5)")
+    r.set_defaults(fn=cmd_restore)
+
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -200,7 +200,11 @@ def main():
     # seconds -- and it reports agent_pane_busy until it is. So retry.
     if agent and agent[1]:
         kind, extra = agent[1], agent[2]
-        cmd = ["agent", "start", kind, "--kind", kind, "--pane", pane_id,
+        # `agent start <NAME>` needs a name unique across the session, lowercase
+        # [a-z0-9_-], <=32 chars. Reusing the kind collides on the second agent
+        # of that kind with agent_name_taken.
+        aname = f"{kind}-{pane_id}".lower().replace(":", "-")[:32]
+        cmd = ["agent", "start", aname, "--kind", kind, "--pane", pane_id,
                "--timeout", "90000"]
         if extra:
             cmd += ["--"] + extra

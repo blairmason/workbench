@@ -207,6 +207,24 @@ herdr-new-tab --print    # show the resolved root, create nothing
 
 ---
 
+## Keeping worktrees off stale code
+
+`EnterWorktree` cuts from `origin/<default-branch>` — the remote-tracking ref,
+not your local branch. That ref only moves when something runs `git fetch`, so
+an agent can silently branch from days-old code and only discover it at merge
+time. Local `main` being behind is irrelevant; fetching is the whole fix.
+
+That belongs in the instruction block (`claude/CLAUDE-worktree-block.md`), which
+tells the agent to fetch immediately before entering the worktree. Freshness is
+needed at exactly one moment, in exactly one repo — narrower and more reliable
+than a scheduled job sweeping every repo, and it needs no daemon and no
+assumptions about where your repos live.
+
+A periodic `git fetch --all --prune` across your checkouts is still worth having
+for other reasons — accurate `git status` in any pane, and fewer round trips
+when you do branch — but it is not what makes agent worktrees current. Don't
+rely on it for that.
+
 ## Gotchas
 
 - **Don't bulk-create spaces in a loop.** Creating many at once can race

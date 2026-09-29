@@ -306,6 +306,17 @@ herdr-new-tab --bare     # no prompts, just the anchored tab
 herdr-new-tab --print    # show the resolved repo root
 ```
 
+### When the agent doesn't start
+
+**A popup vanishes the instant its command exits, taking any error with it.**
+So the wizard keeps a trail at `~/.local/state/herdr-new-tab.log` recording the
+name, the agent picked, and whether it started — and on a *failure* it holds
+the popup open until you press enter, rather than disappearing.
+
+The most common cause is not a failure at all: pressing `esc` at the agent
+prompt means "no agent", and the wizard now says so out loud. The prompt header
+spells it out too.
+
 ## Why new tab and new space are rebound
 
 `terminal.new_cwd` defaults to `"follow"`: a new tab inherits the **source

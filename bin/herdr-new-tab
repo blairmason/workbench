@@ -31,6 +31,29 @@ import subprocess
 import sys
 import time
 
+LOG = pathlib.Path(os.environ.get("XDG_STATE_HOME",
+                                  pathlib.Path.home() / ".local/state")) / "herdr-new-tab.log"
+
+
+def log(msg):
+    """The popup vanishes the moment this script exits, taking any error
+    message with it. Keep a durable trail so a failure can be read after."""
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with LOG.open("a") as f:
+            f.write(f"{time.strftime('%F %T')}  {msg}\n")
+    except OSError:
+        pass
+
+
+def hold(msg):
+    """Show a failure and keep the popup open until acknowledged."""
+    print(f"\n{msg}")
+    try:
+        input("\n[enter] to close> ")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
 DEFAULT_AGENTS = [
     ("claude — opus", "claude", ["--model", "opus"]),
     ("claude — sonnet", "claude", ["--model", "sonnet"]),
@@ -152,9 +175,10 @@ def main():
             return 130
         choices = agents()
         picked = choose("agent> ", [d for d, _, _ in choices],
-                        header=f"{name or 'unnamed'} — {root}")
+                        header=f"{name or 'unnamed'} — {root}  ·  esc = no agent")
         if picked:
             agent = next((a for a in choices if a[0] == picked), None)
+        log(f"name={name!r} picked={picked!r} agent={agent[1] if agent else None}")
 
     # Created UNFOCUSED: focus is taken at the very end, so the popup keeps
     # the keyboard until you're done with it.
@@ -191,14 +215,22 @@ def main():
             time.sleep(1.0)
         if "interactive_ready" in res:
             print(f"started {kind} {' '.join(extra)}".rstrip())
+            log(f"started {kind} {' '.join(extra)} in {pane_id}")
         else:
-            print(f"agent start failed: {res.strip()[:200] or 'no response'}")
+            detail = res.strip()[:300] or "no response"
+            log(f"FAILED {kind} in {pane_id}: {detail}")
+            hold(f"agent start failed after {time.monotonic() - deadline + 30:.0f}s\n"
+                 f"{detail}\n\nlogged to {LOG}")
 
     # Label the tab explicitly by id -- it is not focused yet.
+    if wizard and not agent:
+        print("no agent started (esc at the agent prompt)")
     if wizard:
         tagger = sibling("herdr-tag-tab")
         if tagger:
             subprocess.run([tagger, "pick", "--tab", tab_id])
+        else:
+            log("herdr-tag-tab not found next to this script or on PATH")
 
     # Focus last, once every prompt is done with.
     herdr("tab", "focus", tab_id)

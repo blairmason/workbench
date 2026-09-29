@@ -33,20 +33,23 @@ Two independent slots, written as emoji at the front of the tab name:
 They compose, so `⭐👀 add-search-index` is the current focus, blocked on a
 review.
 
-| Chord | Sets | Effect |
-|---|---|---|
-| `prefix+alt+f` | ⭐ | **focus** — exclusive; demotes the previous focus to p0 |
-| `prefix+alt+q` | 🔴 | p0 |
-| `prefix+alt+w` | 🟡 | p1 |
-| `prefix+alt+e` | ⚪ | p2 |
-| `prefix+alt+r` | 👀 | blocked on a review |
-| `prefix+alt+t` | ✋ | blocked on someone else |
-| `prefix+alt+d` | — | unblock; clears slot 2, keeps the priority |
-| `prefix+alt+x` | — | clear both slots |
-| `prefix+alt+s` | — | **resync** — rebuild sidebar tokens from the marks |
+**One chord: `prefix+alt+l`.** It opens a popup showing the tab's current
+labels and a multi-select list. Pick one priority, one blocker, either, or
+both — `tab`/`space` to mark, `enter` to apply, `esc` to cancel. That's the
+whole interface; there is nothing else to memorise.
 
-Setting a priority replaces ⭐; setting a blocker leaves the priority alone.
-Re-tagging always replaces, never stacks.
+| | |
+|---|---|
+| `prefix+alt+l` | **add / edit labels** (popup multi-select) |
+| `prefix+alt+s` | resync — rebuild sidebar tokens from the marks |
+
+Selecting two options from the same slot keeps the first. Selecting ⭐ moves
+the star off whatever held it, demoting that tab to p0. The list also carries
+*clear priority* and *clear blocked* entries, so unsetting is the same gesture
+as setting.
+
+It uses fzf when installed, and falls back to a numbered menu (enter
+comma-separated numbers) when not.
 
 Under the hood each chord runs `herdr-tag-tab`, which renames the focused tab
 *and* sets matching `$focus` / `$p` / `$blocked` metadata tokens on its panes,
@@ -54,9 +57,13 @@ so the tab row and the sidebar agree. You can call it directly, including with
 an arbitrary emoji:
 
 ```sh
+herdr-tag-tab                # same popup picker, from a shell
 herdr-tag-tab focus | p0 | p1 | p2 | review | them | unblock | clear | resync
-herdr-tag-tab 🚀          # arbitrary mark, no token change
+herdr-tag-tab 🚀             # arbitrary mark, no token change
 ```
+
+Every option remains reachable by name, so scripts and muscle memory both
+work; there just isn't a chord per option to remember.
 
 ### Navigation and tabs
 

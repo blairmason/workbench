@@ -23,6 +23,7 @@ Usage:
 """
 import json
 import re
+import shutil
 import subprocess
 import sys
 
@@ -102,6 +103,92 @@ def apply(tab_id, label, slot1=None, slot2=None):
     return name
 
 
+def set_focus_exclusive(tab_id):
+    """Take the star off whatever holds it, demoting that tab to p0."""
+    for t in all_tabs():
+        if t["tab_id"] == tab_id:
+            continue
+        s1, s2, _ = split_marks(t.get("label", ""))
+        if s1 == FOCUS:
+            apply(t["tab_id"], t["label"], slot1=PRIORITY["p0"], slot2=s2)
+
+
+# (display, slot, value) -- slot 1 is focus/priority, slot 2 is the blocker.
+MENU = [
+    (f"{FOCUS}  focus          — the one thing that matters now", 1, FOCUS),
+    (f"{PRIORITY['p0']}  p0             — next up", 1, PRIORITY["p0"]),
+    (f"{PRIORITY['p1']}  p1", 1, PRIORITY["p1"]),
+    (f"{PRIORITY['p2']}  p2             — background", 1, PRIORITY["p2"]),
+    (f"{BLOCKED['review']}  blocked        — waiting on a review", 2, BLOCKED["review"]),
+    (f"{BLOCKED['them']}  blocked        — waiting on someone", 2, BLOCKED["them"]),
+    ("·  clear priority", 1, ""),
+    ("·  clear blocked", 2, ""),
+]
+
+
+def describe(slot1, slot2):
+    bits = []
+    if slot1 == FOCUS:
+        bits.append("⭐ focus")
+    elif slot1 in PRIORITY_BY_MARK:
+        bits.append(f"{slot1} {PRIORITY_BY_MARK[slot1]}")
+    if slot2:
+        bits.append(f"{slot2} blocked:{BLOCKED_BY_MARK.get(slot2, '?')}")
+    return "  ".join(bits) if bits else "untagged"
+
+
+def pick(tab_id, label):
+    """Popup multi-select: choose one from either slot, or both, or neither."""
+    cur1, cur2, bare = split_marks(label)
+    header = f"{bare or tab_id}\nnow: {describe(cur1, cur2)}   ·   tab/space to multi-select, enter to apply"
+
+    lines = [d for d, _, _ in MENU]
+    if shutil.which("fzf"):
+        proc = subprocess.run(
+            ["fzf", "--multi", "--reverse", "--height=100%",
+             "--prompt=label> ", "--header", header],
+            input="\n".join(lines), capture_output=True, text=True)
+        chosen = [l for l in proc.stdout.splitlines() if l.strip()]
+        if proc.returncode not in (0,) and not chosen:
+            return 130
+    else:
+        print(header + "\n")
+        for i, d in enumerate(lines, 1):
+            print(f"{i:2}. {d}")
+        try:
+            raw = input("\nnumbers (comma-separated, blank to cancel)> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return 130
+        if not raw:
+            return 130
+        chosen = []
+        for part in raw.split(","):
+            try:
+                chosen.append(lines[int(part.strip()) - 1])
+            except (ValueError, IndexError):
+                print(f"ignoring: {part.strip()}", file=sys.stderr)
+
+    by_display = {d: (slot, val) for d, slot, val in MENU}
+    slot1 = slot2 = None
+    for c in chosen:
+        hit = by_display.get(c)
+        if not hit:
+            continue
+        slot, val = hit
+        # First pick per slot wins; the slots are mutually exclusive internally.
+        if slot == 1 and slot1 is None:
+            slot1 = val
+        elif slot == 2 and slot2 is None:
+            slot2 = val
+
+    if slot1 is None and slot2 is None:
+        return 130
+    if slot1 == FOCUS:
+        set_focus_exclusive(tab_id)
+    print(apply(tab_id, label, slot1=slot1, slot2=slot2))
+    return 0
+
+
 def main():
     cmd = (sys.argv[1] if len(sys.argv) > 1 else "").strip().lower()
 
@@ -122,14 +209,10 @@ def main():
     tab = (jget("tab", "get", tab_id) or {}).get("tab", {})
     label = tab.get("label", "")
 
+    if cmd in ("pick", ""):
+        return pick(tab_id, label)
     if cmd == "focus":
-        # Exclusive: demote whoever currently holds the star to p0.
-        for t in all_tabs():
-            if t["tab_id"] == tab_id:
-                continue
-            s1, s2, _ = split_marks(t.get("label", ""))
-            if s1 == FOCUS:
-                apply(t["tab_id"], t["label"], slot1=PRIORITY["p0"], slot2=s2)
+        set_focus_exclusive(tab_id)
         print(apply(tab_id, label, slot1=FOCUS))
     elif cmd in PRIORITY:
         print(apply(tab_id, label, slot1=PRIORITY[cmd]))

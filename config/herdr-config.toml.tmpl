@@ -93,49 +93,24 @@ enabled = false
 # Pairs with session.resume_agents_on_restore = true above.
 pane_history = true
 
-# Tag the FOCUSED tab: slot 1 is focus-or-priority, slot 2 is what's blocking.
-# The tab NAME carries the marks (persisted across restarts); the tokens above
-# are display-only, so `alt+s` rebuilds them from the marks after a restart.
-# alt+<letter> is free -- alt+1..9 is focus_agent, shift+1..9 is switch_workspace.
+# One chord for labelling: a popup multi-select over both slots (focus/priority
+# and what it's blocked on). The tab NAME carries the marks and persists across
+# restarts; the tokens are display-only, so alt+s rebuilds them from the marks.
+# Every option is still reachable directly -- `herdr-tag-tab p0` etc -- there is
+# just no chord to memorise for each.
 [[keys.command]]
-key = "prefix+alt+f"
-type = "shell"
-command = "__BIN__/herdr-tag-tab focus"
+key = "prefix+alt+l"
+type = "popup"
+command = "__BIN__/herdr-tag-tab pick"
+width = "72%"
+height = "50%"
 
-[[keys.command]]
-key = "prefix+alt+q"
-type = "shell"
-command = "__BIN__/herdr-tag-tab p0"
 
-[[keys.command]]
-key = "prefix+alt+w"
-type = "shell"
-command = "__BIN__/herdr-tag-tab p1"
 
-[[keys.command]]
-key = "prefix+alt+e"
-type = "shell"
-command = "__BIN__/herdr-tag-tab p2"
 
-[[keys.command]]
-key = "prefix+alt+r"
-type = "shell"
-command = "__BIN__/herdr-tag-tab review"
 
-[[keys.command]]
-key = "prefix+alt+t"
-type = "shell"
-command = "__BIN__/herdr-tag-tab them"
 
-[[keys.command]]
-key = "prefix+alt+d"
-type = "shell"
-command = "__BIN__/herdr-tag-tab unblock"
 
-[[keys.command]]
-key = "prefix+alt+x"
-type = "shell"
-command = "__BIN__/herdr-tag-tab clear"
 
 [[keys.command]]
 key = "prefix+alt+s"

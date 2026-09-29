@@ -34,8 +34,13 @@ They compose, so `⭐👀 add-search-index` is the current focus, blocked on a
 review.
 
 **One chord: `prefix+alt+l`.** It opens a popup showing the tab's current
-labels and a multi-select list. Pick one priority, one blocker, either, or
-both — `tab`/`space` to mark, `enter` to apply, `esc` to cancel. That's the
+labels and a multi-select list. Pick one priority, one blocker, either,
+or both — **`space` or `tab` marks an item ✓**, `enter` applies, `esc`
+cancels.
+
+> fzf binds only `Tab` to toggle by default, so `space` is bound explicitly.
+> Without that the list looks single-select: pressing space does nothing
+> visible and `enter` applies just the highlighted row. That's the
 whole interface; there is nothing else to memorise.
 
 **Three chords, one family — `prefix+alt+<mnemonic>`:**

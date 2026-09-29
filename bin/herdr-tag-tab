@@ -151,12 +151,18 @@ def describe(slot1, slot2):
 def pick(tab_id, label):
     """Popup multi-select: choose one from either slot, or both, or neither."""
     cur1, cur2, bare = split_marks(label)
-    header = f"{bare or tab_id}\nnow: {describe(cur1, cur2)}   ·   tab/space to multi-select, enter to apply"
+    header = (f"{bare or tab_id}\nnow: {describe(cur1, cur2)}"
+              "   ·   space or tab marks ✓   ·   enter applies")
 
     lines = [d for d, _, _ in MENU]
     if shutil.which("fzf"):
         proc = subprocess.run(
+            # fzf binds only Tab to toggle by default; space is bound here so
+            # the header's promise is true. The list is short, so losing space
+            # as a query character costs nothing.
             ["fzf", "--multi", "--reverse", "--height=100%",
+             "--marker=✓ ", "--pointer=▸",
+             "--bind", "space:toggle+down",
              "--prompt=label> ", "--header", header],
             input="\n".join(lines), capture_output=True, text=True)
         chosen = [l for l in proc.stdout.splitlines() if l.strip()]

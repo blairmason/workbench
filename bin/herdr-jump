@@ -61,8 +61,11 @@ def split_marks(label):
     label = label or ""
     s1 = label[:1] if label[:1] in SLOT1 else ""
     rest = label[len(s1):]
-    s2 = rest[:1] if rest[:1] in SLOT2 else ""
-    return s1, s2, rest[len(s2):].strip()
+    # slot 2 may carry several marks (blocked on a review AND a person)
+    i = 0
+    while i < len(rest) and rest[i] in SLOT2:
+        i += 1
+    return s1, rest[:i], rest[i:].strip()
 
 
 def collect():
@@ -82,7 +85,7 @@ def collect():
             rows.append({
                 "tab_id": t["tab_id"], "space": spaces[ws], "name": bare or t.get("label", ""),
                 "s1": s1, "s2": s2, "prio": prio,
-                "blocked": BLOCKED_BY_MARK.get(s2, ""),
+                "blocked": "+".join(BLOCKED_BY_MARK.get(m, "") for m in s2),
                 "status": status,
                 "agent": a.get("agent", ""),
                 "title": (a.get("terminal_title_stripped") or "").strip(),

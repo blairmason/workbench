@@ -25,10 +25,10 @@ modifier is held with the *second* key — `prefix+alt+f` is `ctrl+b`, then
 
 Two independent slots, written as emoji at the front of the tab name:
 
-| Slot | Marks |
-|---|---|
-| 1 — focus or priority | ⭐ focus · 🔴 p0 · 🟡 p1 · ⚪ p2 |
-| 2 — blocked on | 👀 review · ✋ someone else |
+| Slot | Marks | How many |
+|---|---|---|
+| 1 — focus or priority | ⭐ focus · 🔴 p0 · 🟡 p1 · ⚪ p2 | **one** — a thing has one priority |
+| 2 — blocked on | 👀 review · ✋ someone else | **any** — they accumulate |
 
 They compose, so `⭐👀 add-search-index` is the current focus, blocked on a
 review.

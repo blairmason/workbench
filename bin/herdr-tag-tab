@@ -36,8 +36,10 @@ BLOCKED_BY_MARK = {m: b for b, m in BLOCKED.items()}
 
 SLOT1 = FOCUS + "".join(PRIORITY.values())
 SLOT2 = "".join(BLOCKED.values())
-# Marks are position-significant: slot 1 then slot 2, then the real name.
-MARKS_RE = re.compile(r"^([" + SLOT1 + r"]?)([" + SLOT2 + r"]?)\s*(.*)$", re.S)
+# Marks are position-significant: slot 1, then slot 2, then the real name.
+# Slot 1 holds at most one mark (a thing has one priority). Slot 2 holds any
+# number -- being blocked on a review AND on a person is a real state.
+MARKS_RE = re.compile(r"^([" + SLOT1 + r"]?)([" + SLOT2 + r"]*)\s*(.*)$", re.S)
 
 
 def herdr(*args, capture=True):
@@ -84,7 +86,10 @@ def write_tokens(tab_id, slot1, slot2):
     # Values stay as "p0"/"p1"/"p2" and are matched with `equals` rules --
     # numeric gt/lt rules would depend on herdr coercing a string token value.
     prio = "p0" if slot1 == FOCUS else PRIORITY_BY_MARK.get(slot1)
-    blocked = BLOCKED_BY_MARK.get(slot2)
+    # slot2 may carry several marks; the token joins their names so a
+    # `contains` rule still colours it.
+    names = [BLOCKED_BY_MARK[m] for m in (slot2 or "") if m in BLOCKED_BY_MARK]
+    blocked = "+".join(names) if names else None
 
     for pid in panes_of(tab_id):
         args = ["pane", "report-metadata", pid, "--source", "herdr-tag-tab"]
@@ -144,7 +149,8 @@ def describe(slot1, slot2):
     elif slot1 in PRIORITY_BY_MARK:
         bits.append(f"{slot1} {PRIORITY_BY_MARK[slot1]}")
     if slot2:
-        bits.append(f"{slot2} blocked:{BLOCKED_BY_MARK.get(slot2, '?')}")
+        names = "+".join(BLOCKED_BY_MARK.get(m, "?") for m in slot2)
+        bits.append(f"{slot2} blocked:{names}")
     return "  ".join(bits) if bits else "untagged"
 
 
@@ -196,11 +202,17 @@ def pick(tab_id, label):
         if slot == 0:
             do_resync = True
             continue
-        # First pick per slot wins; the slots are mutually exclusive internally.
-        if slot == 1 and slot1 is None:
-            slot1 = val
-        elif slot == 2 and slot2 is None:
-            slot2 = val
+        if slot == 1:
+            # One priority only -- first pick wins.
+            if slot1 is None:
+                slot1 = val
+        elif slot == 2:
+            if val == "":          # "clear blocked" wipes the whole slot
+                slot2 = ""
+            elif slot2 == "":
+                continue           # an explicit clear beats additions
+            else:
+                slot2 = (slot2 or "") + val
 
     if do_resync:
         print(f"resynced {resync_all()} tagged tab(s)")

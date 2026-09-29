@@ -70,9 +70,11 @@ claude = [
        { equals = "p1", fg = "#f9e2af" },
        { equals = "p2", fg = "#6c7086", dim = true },
    ] },
+   # `contains`, not `equals`: the token may be "review+them" when a tab is
+   # blocked on both. First match wins, so the more urgent one leads.
    { token = "$blocked", fg = "#f38ba8", rules = [
-       { equals = "review", fg = "#fab387", bold = true },
-       { equals = "them",   fg = "#cba6f7", bold = true },
+       { contains = "review", fg = "#fab387", bold = true },
+       { contains = "them",   fg = "#cba6f7", bold = true },
    ] }],
   ["agent"],
 ]

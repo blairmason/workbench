@@ -43,7 +43,7 @@ whole interface; there is nothing else to memorise.
 | | |
 |---|---|
 | `prefix+alt+l` | **l**abel the focused tab (multi-select popup) |
-| `prefix+alt+t` | new **t**ab, at this space's repo root |
+| `prefix+alt+t` | new **t**ab — name, agent, labels, ready to talk to |
 | `prefix+alt+s` | new **s**pace, pick a repo, at its root |
 
 Resync lives inside the label popup as its last entry, so it needs no chord of
@@ -215,6 +215,40 @@ the picker needs a terminal. It uses fzf when present and a numbered menu otherw
 herdr-new-space              # pick
 herdr-new-space ~/code/thing # direct, no picker
 herdr-new-space --list       # show candidates, create nothing
+```
+
+## The new-tab wizard
+
+`prefix+alt+t` walks three prompts and leaves you in a working agent:
+
+1. **name** — becomes the tab label (blank for herdr's default)
+2. **agent** — which agent and model to start, or a plain shell
+3. **labels** — the same multi-select as `prefix+alt+l`
+
+Each is skippable with enter or esc, so hammering enter three times gives you
+exactly the plain anchored tab you'd have got before.
+
+The agent starts *before* labelling, because `herdr agent start` requires the
+pane to be sitting at an interactive shell prompt and blocks until the agent
+reports ready — so the tab is live by the time you tag it.
+
+The offered agents default to claude (opus / sonnet / default), codex, and a
+plain shell. Override with `$HERDR_TAB_AGENTS` — entries separated by `;`,
+each `display=kind` or `display=kind args`:
+
+```sh
+HERDR_TAB_AGENTS='claude opus=claude --model opus;grok=grok'
+```
+
+`herdr agent start` supports pi, claude, codex, gemini, cursor, devin, cline,
+opencode, copilot, kimi, droid, amp, grok and more — `herdr agent start --help`
+has the current list. A model alias like `opus`, `sonnet` or `fable` is passed
+straight through to the agent's own CLI.
+
+```sh
+herdr-new-tab            # the wizard
+herdr-new-tab --bare     # no prompts, just the anchored tab
+herdr-new-tab --print    # show the resolved repo root
 ```
 
 ## Why new tab and new space are rebound

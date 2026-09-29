@@ -106,11 +106,14 @@ command = "__BIN__/herdr-tag-tab pick"
 width = "72%"
 height = "50%"
 
-# New tab, anchored at this space's repo root.
+# New tab: name -> agent -> labels, then it's ready to talk to. A popup, not a
+# detached shell, because it prompts. Skip any prompt with enter/esc.
 [[keys.command]]
 key = "prefix+alt+t"
-type = "shell"
+type = "popup"
 command = "__BIN__/herdr-new-tab"
+width = "72%"
+height = "60%"
 
 # New space: pick a repo, anchored at its root.
 [[keys.command]]

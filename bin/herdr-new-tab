@@ -1,29 +1,46 @@
 #!/usr/bin/env python3
-"""Open a new tab in the focused space, anchored at that space's REPO ROOT.
+"""New tab in the focused space, anchored at that space's repo root.
 
-herdr's `terminal.new_cwd = "follow"` (the default) makes a new tab inherit the
-source pane's *current* directory. Once an agent has entered a git worktree, or
-a shell has cd'd away, every tab branched from it inherits that instead of the
-repo -- and a tab born inside a worktree gets its own Claude project namespace,
-which is orphaned when the worktree is removed.
+By default this is a short wizard: name, agent, then labels. It creates the tab
+at the repo root, names it, starts the agent and tags it, so the tab is ready
+to talk to. Any prompt can be skipped with an empty answer or esc.
 
-This resolves the repo root instead, and is deliberate about worktrees: from
-inside one, `--git-common-dir` points at the MAIN checkout's .git, so we always
-land on the repo root rather than the worktree.
+    herdr-new-tab              wizard
+    herdr-new-tab --bare       just make the tab, no prompts
+    herdr-new-tab --print      print the resolved repo root, create nothing
 
-    herdr-new-tab              new tab at the focused space's repo root
-    herdr-new-tab --print      print the resolved root, create nothing
+Why anchor at the repo root: herdr's `terminal.new_cwd = "follow"` makes a new
+tab inherit the source pane's *current* directory. Once an agent has entered a
+git worktree, tabs branched from it inherit the worktree -- and a tab born in a
+worktree gets its own agent-memory namespace, orphaned when the worktree goes.
+From inside a linked worktree `--git-common-dir` points at the MAIN checkout,
+so resolving through it always lands on the repo.
+
+Agents offered come from $HERDR_TAB_AGENTS if set: entries separated by ";",
+each "display=kind" or "display=kind args", e.g.
+
+    HERDR_TAB_AGENTS='claude opus=claude --model opus;codex=codex'
 """
 import collections
 import json
+import os
 import pathlib
+import shlex
+import shutil
 import subprocess
 import sys
 
+DEFAULT_AGENTS = [
+    ("claude — opus", "claude", ["--model", "opus"]),
+    ("claude — sonnet", "claude", ["--model", "sonnet"]),
+    ("claude — default model", "claude", []),
+    ("codex", "codex", []),
+    ("(none) — plain shell", None, []),
+]
+
 
 def herdr(*args):
-    r = subprocess.run(["herdr", *args], capture_output=True, text=True)
-    return r.stdout
+    return subprocess.run(["herdr", *args], capture_output=True, text=True).stdout
 
 
 def jget(*args):
@@ -34,60 +51,138 @@ def jget(*args):
 
 
 def repo_root(path):
-    """Main-checkout root for `path`, resolving a worktree back to its parent."""
+    """Main-checkout root for `path`; a worktree resolves to its parent repo."""
     try:
         r = subprocess.run(
-            ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["git", "-C", path, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
             capture_output=True, text=True, timeout=5)
         common = r.stdout.strip()
     except Exception:
         return None
-    if not common:
-        return None
-    p = pathlib.Path(common)
-    # <repo>/.git for a normal repo; the same for a linked worktree, which is
-    # exactly why this resolves to the main checkout and not the worktree.
-    return str(p.parent) if p.name == ".git" else None
+    p = pathlib.Path(common) if common else None
+    return str(p.parent) if p and p.name == ".git" else None
 
 
-def main():
+def resolve_target():
     spaces = (jget("workspace", "list") or {}).get("workspaces", [])
     focused = next((w for w in spaces if w.get("focused")), None)
     if not focused:
-        print("no focused space", file=sys.stderr)
-        return 1
+        return None, None
     ws = focused["workspace_id"]
-
     panes = [p for p in (jget("pane", "list") or {}).get("panes", [])
              if p.get("workspace_id") == ws]
-
-    # Most common repo root across the space's panes wins: individual panes
-    # drift into worktrees or elsewhere, the majority still names the repo.
     roots = collections.Counter()
     for p in panes:
         for key in ("cwd", "foreground_cwd"):
-            d = p.get(key)
-            if d:
-                r = repo_root(d)
+            if p.get(key):
+                r = repo_root(p[key])
                 if r:
                     roots[r] += 1
-    target = roots.most_common(1)[0][0] if roots else None
+    if roots:
+        return ws, roots.most_common(1)[0][0]
+    return ws, (panes[0].get("cwd") if panes else str(pathlib.Path.home()))
 
-    if not target:
-        # No git anywhere in the space (e.g. "home"): fall back to the space's
-        # recorded identity, then to the first pane's cwd, then $HOME.
-        target = (panes[0].get("cwd") if panes else None) or str(pathlib.Path.home())
 
-    if "--print" in sys.argv:
-        print(f"{ws} ({focused.get('label')}) -> {target}")
+def agents():
+    raw = os.environ.get("HERDR_TAB_AGENTS")
+    if not raw:
+        return DEFAULT_AGENTS
+    out = []
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        display, spec = entry.split("=", 1)
+        parts = shlex.split(spec)
+        if parts:
+            out.append((display.strip(), parts[0], parts[1:]))
+    out.append(("(none) — plain shell", None, []))
+    return out
+
+
+def choose(prompt, options, header=""):
+    """Single-select; returns the chosen string or None if skipped."""
+    if shutil.which("fzf"):
+        args = ["fzf", "--reverse", "--height=100%", f"--prompt={prompt}"]
+        if header:
+            args += ["--header", header]
+        proc = subprocess.run(args, input="\n".join(options),
+                              capture_output=True, text=True)
+        return proc.stdout.strip() or None
+    for i, o in enumerate(options, 1):
+        print(f"{i:2}. {o}")
+    try:
+        raw = input(f"{prompt}(blank to skip)> ").strip()
+        return options[int(raw) - 1] if raw else None
+    except (ValueError, IndexError, EOFError, KeyboardInterrupt):
+        return None
+
+
+def sibling(name):
+    """Find a companion script next to this one, or on PATH."""
+    here = pathlib.Path(sys.argv[0]).resolve().parent / name
+    return str(here) if here.exists() else shutil.which(name)
+
+
+def main():
+    argv = sys.argv[1:]
+    ws, root = resolve_target()
+    if not ws:
+        print("no focused space", file=sys.stderr)
+        return 1
+
+    if "--print" in argv:
+        print(f"{ws} -> {root}")
         return 0
 
-    out = herdr("tab", "create", "--workspace", ws, "--cwd", target, "--focus")
+    wizard = "--bare" not in argv
+    name = None
+    agent = None
+
+    if wizard:
+        print(f"new tab in {ws}   {root}\n")
+        try:
+            name = input("name (blank for default)> ").strip() or None
+        except (EOFError, KeyboardInterrupt):
+            return 130
+        choices = agents()
+        picked = choose("agent> ", [d for d, _, _ in choices],
+                        header=f"{name or 'unnamed'} — {root}")
+        if picked:
+            agent = next((a for a in choices if a[0] == picked), None)
+
+    create = ["tab", "create", "--workspace", ws, "--cwd", root, "--focus"]
+    if name:
+        create += ["--label", name]
+    out = herdr(*create)
     try:
-        t = json.loads(out)["result"]["tab"]
-        print(f"{t['tab_id']} at {target}")
+        res = json.loads(out)["result"]
+        tab_id = res["tab"]["tab_id"]
+        pane_id = res["root_pane"]["pane_id"]
     except (ValueError, KeyError):
         sys.stdout.write(out)
+        return 1
+    print(f"{tab_id} at {root}")
+
+    # Start the agent before labelling: `agent start` needs the pane sitting at
+    # an interactive shell prompt, and it blocks until the agent is ready.
+    if agent and agent[1]:
+        kind, extra = agent[1], agent[2]
+        cmd = ["agent", "start", kind, "--kind", kind, "--pane", pane_id]
+        if extra:
+            cmd += ["--"] + extra
+        res = herdr(*cmd)
+        if '"error"' in res or not res.strip():
+            print(f"agent start failed: {res.strip()[:200] or 'no response'}")
+        else:
+            print(f"started {kind} {' '.join(extra)}".rstrip())
+
+    # Labelling last: herdr-tag-tab acts on the focused tab, which is this one.
+    if wizard:
+        tagger = sibling("herdr-tag-tab")
+        if tagger:
+            subprocess.run([tagger, "pick"])
     return 0
 
 

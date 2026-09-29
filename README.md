@@ -38,10 +38,16 @@ labels and a multi-select list. Pick one priority, one blocker, either, or
 both — `tab`/`space` to mark, `enter` to apply, `esc` to cancel. That's the
 whole interface; there is nothing else to memorise.
 
+**Three chords, one family — `prefix+alt+<mnemonic>`:**
+
 | | |
 |---|---|
-| `prefix+alt+l` | **add / edit labels** (popup multi-select) |
-| `prefix+alt+s` | resync — rebuild sidebar tokens from the marks |
+| `prefix+alt+l` | **l**abel the focused tab (multi-select popup) |
+| `prefix+alt+t` | new **t**ab, at this space's repo root |
+| `prefix+alt+s` | new **s**pace, pick a repo, at its root |
+
+Resync lives inside the label popup as its last entry, so it needs no chord of
+its own.
 
 Selecting two options from the same slot keeps the first. Selecting ⭐ moves
 the star off whatever held it, demoting that tab to p0. The list also carries
@@ -69,13 +75,13 @@ work; there just isn't a chord per option to remember.
 
 | Chord | Effect |
 |---|---|
-| `prefix+c` | new tab **at the space's repo root** (see below) |
+| `prefix+alt+t` | new tab **at the space's repo root** (see below) |
 | `prefix+shift+c` | new tab following the current directory (herdr's builtin) |
 | `prefix+a` / `prefix+shift+a` | next / previous agent |
 | `prefix+alt+1..9` | jump straight to agent N |
 | `prefix+shift+1..9` | switch to space N |
-| `prefix+shift+n` | **new space** for a repo, anchored at its root (picker) |
-| `prefix+alt+n` | new space following the current directory (herdr's builtin) |
+| `prefix+alt+s` | **new space** for a repo, anchored at its root (picker) |
+| `prefix+shift+n` | new space following the current directory (herdr's builtin) |
 | `prefix+w` | space picker — the real navigation past nine spaces |
 | `prefix+q` | detach, leaving everything running |
 | `prefix+?` | herdr's own help, listing bindings from the running config |
@@ -202,8 +208,8 @@ the repo's directory name. Candidates come from `$HERDR_REPO_ROOTS`
 excluded** — under this layout a worktree belongs to its repo's space, not one
 of its own — and repos that already have a space are marked rather than hidden.
 
-It's bound as a `popup`, not a detached shell, because the picker needs a
-terminal. It uses fzf when present and a numbered menu otherwise.
+It's on `prefix+alt+s`, bound as a `popup` rather than a detached shell because
+the picker needs a terminal. It uses fzf when present and a numbered menu otherwise.
 
 ```sh
 herdr-new-space              # pick
@@ -211,7 +217,7 @@ herdr-new-space ~/code/thing # direct, no picker
 herdr-new-space --list       # show candidates, create nothing
 ```
 
-## Why `prefix+c` is rebound
+## Why new tab and new space are rebound
 
 `terminal.new_cwd` defaults to `"follow"`: a new tab inherits the **source
 pane's current directory**, not the space's identity. Once an agent has entered
@@ -229,9 +235,14 @@ space costs you its tabs.
 `herdr-new-tab` routes around both. It resolves the focused space's repo root
 as the majority `git --git-common-dir` across its panes; from inside a linked
 worktree that points at the **main checkout's** `.git`, so it lands on the repo
-even when most panes have drifted. It takes `prefix+c`, the muscle-memory key;
-the builtin moves to `prefix+shift+c` for when you deliberately want a tab
-beside an agent inside its worktree.
+even when most panes have drifted. It takes `prefix+alt+t`; the builtin keeps
+`prefix+shift+c` for when you deliberately want a tab beside an agent inside
+its worktree.
+
+herdr's own defaults for these are `prefix+c` and `prefix+shift+n` — tmux's
+`c`-for-create convention. They're left on `shift` variants here rather than
+reused, so the three anchored commands can share one `prefix+alt+<mnemonic>`
+shape and there's no bare letter to misremember.
 
 ```sh
 herdr-new-tab            # new tab at the focused space's repo root

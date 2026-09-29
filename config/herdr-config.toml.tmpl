@@ -43,13 +43,13 @@ switch_workspace = "prefix+shift+1..9"
 # born in a worktree also gets its own Claude project namespace, orphaned when
 # that worktree goes. So prefix+c is rebound below to herdr-new-tab, which
 # anchors at the space's repo root; the builtin moves to prefix+shift+c.
-new_tab = "prefix+shift+c"
+new_tab = "prefix+shift+c"      # builtin: follows the current cwd
 
 # Same reasoning for spaces, but the stakes are higher: a space's cwd becomes
 # its permanent identity_cwd and no CLI can change it afterwards. prefix+shift+n
 # is rebound below to herdr-new-space (pick a repo, anchor at its root); the
 # builtin follow-the-cwd version moves to prefix+alt+n.
-new_workspace = "prefix+alt+n"
+new_workspace = "prefix+shift+n"  # builtin: follows the current cwd
 
 # Claude sets its terminal title to the live task; surface it in the sidebar so
 # rows read by what the agent is doing, not just "backend".
@@ -93,11 +93,12 @@ enabled = false
 # Pairs with session.resume_agents_on_restore = true above.
 pane_history = true
 
-# One chord for labelling: a popup multi-select over both slots (focus/priority
-# and what it's blocked on). The tab NAME carries the marks and persists across
-# restarts; the tokens are display-only, so alt+s rebuilds them from the marks.
-# Every option is still reachable directly -- `herdr-tag-tab p0` etc -- there is
-# just no chord to memorise for each.
+# One family, all prefix+alt+<mnemonic>:  l = label, t = tab, s = space.
+# Each opens a popup; nothing else needs memorising. The herdr builtins for
+# new tab / new space stay on prefix+shift+c and prefix+shift+n, and follow the
+# current directory rather than anchoring at the repo root.
+
+# Label the focused tab: multi-select over priority and blocker, plus resync.
 [[keys.command]]
 key = "prefix+alt+l"
 type = "popup"
@@ -105,29 +106,15 @@ command = "__BIN__/herdr-tag-tab pick"
 width = "72%"
 height = "50%"
 
-
-
-
-
-
-
-
+# New tab, anchored at this space's repo root.
 [[keys.command]]
-key = "prefix+alt+s"
-type = "shell"
-command = "__BIN__/herdr-tag-tab resync"
-
-# New tab anchored at the focused space's repo root (resolves a worktree back
-# to its main checkout). Builtin follow-the-cwd behaviour is on prefix+shift+c.
-[[keys.command]]
-key = "prefix+c"
+key = "prefix+alt+t"
 type = "shell"
 command = "__BIN__/herdr-new-tab"
 
-# Pick a repo and open a space anchored at its root. A popup, not a detached
-# shell, because the picker needs a terminal.
+# New space: pick a repo, anchored at its root.
 [[keys.command]]
-key = "prefix+shift+n"
+key = "prefix+alt+s"
 type = "popup"
 command = "__BIN__/herdr-new-space"
 width = "70%"

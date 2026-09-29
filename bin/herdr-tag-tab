@@ -103,6 +103,16 @@ def apply(tab_id, label, slot1=None, slot2=None):
     return name
 
 
+def resync_all():
+    n = 0
+    for t in all_tabs():
+        s1, s2, _ = split_marks(t.get("label", ""))
+        if s1 or s2:
+            write_tokens(t["tab_id"], s1, s2)
+            n += 1
+    return n
+
+
 def set_focus_exclusive(tab_id):
     """Take the star off whatever holds it, demoting that tab to p0."""
     for t in all_tabs():
@@ -123,6 +133,7 @@ MENU = [
     (f"{BLOCKED['them']}  blocked        — waiting on someone", 2, BLOCKED["them"]),
     ("·  clear priority", 1, ""),
     ("·  clear blocked", 2, ""),
+    ("↻  resync all tabs — after a restart, rebuild colours from the marks", 0, None),
 ]
 
 
@@ -170,19 +181,25 @@ def pick(tab_id, label):
 
     by_display = {d: (slot, val) for d, slot, val in MENU}
     slot1 = slot2 = None
+    do_resync = False
     for c in chosen:
         hit = by_display.get(c)
         if not hit:
             continue
         slot, val = hit
+        if slot == 0:
+            do_resync = True
+            continue
         # First pick per slot wins; the slots are mutually exclusive internally.
         if slot == 1 and slot1 is None:
             slot1 = val
         elif slot == 2 and slot2 is None:
             slot2 = val
 
+    if do_resync:
+        print(f"resynced {resync_all()} tagged tab(s)")
     if slot1 is None and slot2 is None:
-        return 130
+        return 0 if do_resync else 130
     if slot1 == FOCUS:
         set_focus_exclusive(tab_id)
     print(apply(tab_id, label, slot1=slot1, slot2=slot2))
@@ -193,13 +210,7 @@ def main():
     cmd = (sys.argv[1] if len(sys.argv) > 1 else "").strip().lower()
 
     if cmd == "resync":
-        n = 0
-        for t in all_tabs():
-            s1, s2, _ = split_marks(t.get("label", ""))
-            if s1 or s2:
-                write_tokens(t["tab_id"], s1, s2)
-                n += 1
-        print(f"resynced {n} tagged tab(s)")
+        print(f"resynced {resync_all()} tagged tab(s)")
         return 0
 
     tab_id = focused_tab_id()

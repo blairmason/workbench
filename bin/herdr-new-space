@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Create a herdr space for a repo, anchored at that repo's root.
+
+herdr's builtin new-workspace uses `terminal.new_cwd` (default "follow"), so a
+space inherits the source pane's current directory. For a tab that's merely
+annoying; for a space it's permanent -- the directory becomes the space's
+identity_cwd, there is no CLI to change it, and fixing it means recreating the
+space and losing its tabs.
+
+This picks a repo and creates the space at its root, labelled with the repo's
+directory name.
+
+    herdr-new-space               pick a repo (fzf, or a numbered menu)
+    herdr-new-space <path>        create a space for that path directly
+    herdr-new-space --list        print candidates, create nothing
+
+Search roots come from $HERDR_REPO_ROOTS (colon-separated); by default it tries
+the usual suspects and keeps whichever exist:
+    ~/src ~/code ~/projects ~/dev ~/repos ~/work
+Repos are found one and two levels down. Linked worktrees are skipped -- under
+this layout a worktree belongs to its repo's space, not a space of its own.
+"""
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+
+DEFAULT_ROOTS = ["~/src", "~/code", "~/projects", "~/dev", "~/repos", "~/work"]
+
+
+def herdr(*args):
+    return subprocess.run(["herdr", *args], capture_output=True, text=True).stdout
+
+
+def jget(*args):
+    try:
+        return json.loads(herdr(*args))["result"]
+    except (ValueError, KeyError):
+        return None
+
+
+def roots():
+    env = os.environ.get("HERDR_REPO_ROOTS")
+    raw = env.split(":") if env else DEFAULT_ROOTS
+    out = []
+    for r in raw:
+        p = pathlib.Path(r).expanduser()
+        if p.is_dir():
+            out.append(p)
+    return out
+
+
+def is_main_checkout(d):
+    """True for a real repo; False for a linked worktree (whose .git is a file)."""
+    g = d / ".git"
+    return g.is_dir()
+
+
+def find_repos():
+    seen, out = set(), []
+    for root in roots():
+        for depth in (1, 2):
+            pattern = "/".join(["*"] * depth)
+            try:
+                candidates = sorted(root.glob(pattern))
+            except OSError:
+                continue
+            for d in candidates:
+                if not d.is_dir() or d in seen:
+                    continue
+                if is_main_checkout(d):
+                    seen.add(d)
+                    out.append(d)
+    return out
+
+
+def repo_root_of(path):
+    try:
+        r = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5)
+        common = r.stdout.strip()
+    except Exception:
+        return None
+    p = pathlib.Path(common) if common else None
+    return str(p.parent) if p and p.name == ".git" else None
+
+
+def spaces_by_root():
+    """Map repo root -> space label, for repos that already have a space."""
+    panes = (jget("pane", "list") or {}).get("panes", [])
+    spaces = {w["workspace_id"]: w.get("label", "")
+              for w in (jget("workspace", "list") or {}).get("workspaces", [])}
+    out = {}
+    for p in panes:
+        d = p.get("cwd")
+        if not d:
+            continue
+        r = repo_root_of(d)
+        if r:
+            out.setdefault(r, spaces.get(p.get("workspace_id"), "?"))
+    return out
+
+
+def create(path):
+    path = str(pathlib.Path(path).expanduser().resolve())
+    root = repo_root_of(path) or path
+    label = pathlib.Path(root).name
+    out = herdr("workspace", "create", "--cwd", root, "--label", label, "--focus")
+    try:
+        w = json.loads(out)["result"]["workspace"]
+        print(f"{w['workspace_id']}  {w['label']}  {root}")
+    except (ValueError, KeyError):
+        sys.stdout.write(out)
+        return 1
+    return 0
+
+
+def main():
+    args = [a for a in sys.argv[1:]]
+    if args and args[0] not in ("--list",):
+        return create(args[0])
+
+    repos = find_repos()
+    if not repos:
+        print("no repos found. Set HERDR_REPO_ROOTS to a colon-separated list "
+              "of directories holding your checkouts.", file=sys.stderr)
+        return 1
+
+    existing = spaces_by_root()
+    rows = []
+    for d in repos:
+        mark = f"  [space: {existing[str(d)]}]" if str(d) in existing else ""
+        rows.append((f"{d}{mark}", str(d)))
+
+    if "--list" in args:
+        for disp, _ in rows:
+            print(disp)
+        return 0
+
+    if shutil.which("fzf"):
+        proc = subprocess.run(
+            ["fzf", "--prompt=space for repo> ", "--height=80%", "--reverse"],
+            input="\n".join(d for d, _ in rows), capture_output=True, text=True)
+        choice = proc.stdout.strip()
+        if not choice:
+            return 130
+        target = dict(rows)[choice]
+    else:
+        for i, (disp, _) in enumerate(rows, 1):
+            print(f"{i:3}. {disp}")
+        try:
+            n = int(input("number> ").strip())
+            target = rows[n - 1][1]
+        except (ValueError, IndexError, EOFError, KeyboardInterrupt):
+            return 130
+
+    return create(target)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

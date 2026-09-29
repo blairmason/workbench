@@ -67,6 +67,8 @@ herdr-tag-tab 🚀          # arbitrary mark, no token change
 | `prefix+a` / `prefix+shift+a` | next / previous agent |
 | `prefix+alt+1..9` | jump straight to agent N |
 | `prefix+shift+1..9` | switch to space N |
+| `prefix+shift+n` | **new space** for a repo, anchored at its root (picker) |
+| `prefix+alt+n` | new space following the current directory (herdr's builtin) |
 | `prefix+w` | space picker — the real navigation past nine spaces |
 | `prefix+q` | detach, leaving everything running |
 | `prefix+?` | herdr's own help, listing bindings from the running config |
@@ -177,6 +179,30 @@ reason is structural: **metadata attaches to panes and spaces, never tabs** —
 a tab carries only label, number, pane count and agent status, so there is
 nothing for a rule to key on. Hence emoji in the name, which is the one thing
 that renders in the tab row itself.
+
+## Why `prefix+shift+n` is rebound too
+
+Same cause as `prefix+c`, higher stakes. A space created by the builtin takes
+its directory from `new_cwd` — and that directory becomes the space's permanent
+`identity_cwd`. There is no CLI to change it afterwards, so a space born in the
+wrong place stays mislabelled unless you delete and recreate it, losing its
+tabs.
+
+`herdr-new-space` picks a repo and anchors the space at its root, labelled with
+the repo's directory name. Candidates come from `$HERDR_REPO_ROOTS`
+(colon-separated; defaults to whichever of `~/src ~/code ~/projects ~/dev
+~/repos ~/work` exist), searched one and two levels down. **Linked worktrees are
+excluded** — under this layout a worktree belongs to its repo's space, not one
+of its own — and repos that already have a space are marked rather than hidden.
+
+It's bound as a `popup`, not a detached shell, because the picker needs a
+terminal. It uses fzf when present and a numbered menu otherwise.
+
+```sh
+herdr-new-space              # pick
+herdr-new-space ~/code/thing # direct, no picker
+herdr-new-space --list       # show candidates, create nothing
+```
 
 ## Why `prefix+c` is rebound
 

@@ -50,7 +50,7 @@ esac
 
 say "== 2. helper scripts -> $BIN_DIR"
 run mkdir -p "$BIN_DIR"
-for f in herdr-tag-tab herdr-new-tab; do
+for f in herdr-tag-tab herdr-new-tab herdr-new-space; do
   backup "$BIN_DIR/$f"
   run cp "$HERE/bin/$f" "$BIN_DIR/$f"
   run chmod +x "$BIN_DIR/$f"
@@ -62,6 +62,10 @@ case ":$PATH:" in
      say "        paths so they still work, but you won't be able to run the"
      say "        scripts by name." ;;
 esac
+
+if ! command -v fzf >/dev/null 2>&1; then
+  say "  note: fzf not found. herdr-new-space falls back to a numbered menu."
+fi
 
 say "== 3. herdr config -> $CONFIG_DIR/config.toml"
 run mkdir -p "$CONFIG_DIR"

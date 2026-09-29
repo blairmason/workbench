@@ -45,6 +45,12 @@ switch_workspace = "prefix+shift+1..9"
 # anchors at the space's repo root; the builtin moves to prefix+shift+c.
 new_tab = "prefix+shift+c"
 
+# Same reasoning for spaces, but the stakes are higher: a space's cwd becomes
+# its permanent identity_cwd and no CLI can change it afterwards. prefix+shift+n
+# is rebound below to herdr-new-space (pick a repo, anchor at its root); the
+# builtin follow-the-cwd version moves to prefix+alt+n.
+new_workspace = "prefix+alt+n"
+
 # Claude sets its terminal title to the live task; surface it in the sidebar so
 # rows read by what the agent is doing, not just "backend".
 [ui.sidebar.agents]
@@ -76,9 +82,8 @@ claude = [
 [ui.toast]
 delivery = "system"
 
-# Off because something else (an agent-side hook) is expected to own sound
-# notifications; two sources double up. Flip to true to let herdr own them --
-# it can distinguish background spaces, which a per-agent hook cannot.
+# peon-ping already plays sounds via Claude hooks; herdr's would double up.
+# Flip to true if you'd rather herdr own it (it distinguishes background spaces).
 [ui.sound]
 enabled = false
 
@@ -143,3 +148,12 @@ command = "__BIN__/herdr-tag-tab resync"
 key = "prefix+c"
 type = "shell"
 command = "__BIN__/herdr-new-tab"
+
+# Pick a repo and open a space anchored at its root. A popup, not a detached
+# shell, because the picker needs a terminal.
+[[keys.command]]
+key = "prefix+shift+n"
+type = "popup"
+command = "__BIN__/herdr-new-space"
+width = "70%"
+height = "60%"

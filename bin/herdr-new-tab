@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Open a new tab in the focused space, anchored at that space's REPO ROOT.
+
+herdr's `terminal.new_cwd = "follow"` (the default) makes a new tab inherit the
+source pane's *current* directory. Once an agent has entered a git worktree, or
+a shell has cd'd away, every tab branched from it inherits that instead of the
+repo -- and a tab born inside a worktree gets its own Claude project namespace,
+which is orphaned when the worktree is removed.
+
+This resolves the repo root instead, and is deliberate about worktrees: from
+inside one, `--git-common-dir` points at the MAIN checkout's .git, so we always
+land on the repo root rather than the worktree.
+
+    herdr-new-tab              new tab at the focused space's repo root
+    herdr-new-tab --print      print the resolved root, create nothing
+"""
+import collections
+import json
+import pathlib
+import subprocess
+import sys
+
+
+def herdr(*args):
+    r = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    return r.stdout
+
+
+def jget(*args):
+    try:
+        return json.loads(herdr(*args))["result"]
+    except (ValueError, KeyError):
+        return None
+
+
+def repo_root(path):
+    """Main-checkout root for `path`, resolving a worktree back to its parent."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True, timeout=5)
+        common = r.stdout.strip()
+    except Exception:
+        return None
+    if not common:
+        return None
+    p = pathlib.Path(common)
+    # <repo>/.git for a normal repo; the same for a linked worktree, which is
+    # exactly why this resolves to the main checkout and not the worktree.
+    return str(p.parent) if p.name == ".git" else None
+
+
+def main():
+    spaces = (jget("workspace", "list") or {}).get("workspaces", [])
+    focused = next((w for w in spaces if w.get("focused")), None)
+    if not focused:
+        print("no focused space", file=sys.stderr)
+        return 1
+    ws = focused["workspace_id"]
+
+    panes = [p for p in (jget("pane", "list") or {}).get("panes", [])
+             if p.get("workspace_id") == ws]
+
+    # Most common repo root across the space's panes wins: individual panes
+    # drift into worktrees or elsewhere, the majority still names the repo.
+    roots = collections.Counter()
+    for p in panes:
+        for key in ("cwd", "foreground_cwd"):
+            d = p.get(key)
+            if d:
+                r = repo_root(d)
+                if r:
+                    roots[r] += 1
+    target = roots.most_common(1)[0][0] if roots else None
+
+    if not target:
+        # No git anywhere in the space (e.g. "home"): fall back to the space's
+        # recorded identity, then to the first pane's cwd, then $HOME.
+        target = (panes[0].get("cwd") if panes else None) or str(pathlib.Path.home())
+
+    if "--print" in sys.argv:
+        print(f"{ws} ({focused.get('label')}) -> {target}")
+        return 0
+
+    out = herdr("tab", "create", "--workspace", ws, "--cwd", target, "--focus")
+    try:
+        t = json.loads(out)["result"]["tab"]
+        print(f"{t['tab_id']} at {target}")
+    except (ValueError, KeyError):
+        sys.stdout.write(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

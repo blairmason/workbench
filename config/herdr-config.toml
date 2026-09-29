@@ -38,6 +38,13 @@ focus_agent = "prefix+alt+1..9"
 # prefix+w (workspace_picker) is the real navigation past that.
 switch_workspace = "prefix+shift+1..9"
 
+# new_cwd defaults to "follow", so a new tab inherits the SOURCE PANE's current
+# directory -- which drifts once an agent enters .claude/worktrees/... A tab
+# born in a worktree also gets its own Claude project namespace, orphaned when
+# that worktree goes. So prefix+c is rebound below to herdr-new-tab, which
+# anchors at the space's repo root; the builtin moves to prefix+shift+c.
+new_tab = "prefix+shift+c"
+
 # Claude sets its terminal title to the live task; surface it in the sidebar so
 # rows read by what the agent is doing, not just "backend".
 [ui.sidebar.agents]
@@ -129,3 +136,9 @@ key = "prefix+alt+s"
 type = "shell"
 command = "/Users/blairmason/.local/bin/herdr-tag-tab resync"
 
+# New tab anchored at the focused space's repo root (resolves a worktree back
+# to its main checkout). Builtin follow-the-cwd behaviour is on prefix+shift+c.
+[[keys.command]]
+key = "prefix+c"
+type = "shell"
+command = "/Users/blairmason/.local/bin/herdr-new-tab"

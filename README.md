@@ -58,6 +58,7 @@ branches belong to the agents.
 ```
 config/herdr-config.toml   the whole herdr config
 bin/herdr-tag-tab          focus/priority/blocked tagging for tabs
+bin/herdr-new-tab          new tab anchored at the space's repo root
 bin/git-sync-src.sh        fetch (and optionally fast-forward) every repo in ~/src
 bin/rnd-harvest            sweep all Claude memory namespaces into one digest
 bin/rnd-weekly             weekly consolidation pass for ~/src/rnd
@@ -304,3 +305,33 @@ The weekly pass is a **LaunchAgent**, not a Claude cron job or a cloud routine:
 `CronCreate` jobs are session-only and expire after 7 days, and cloud routines
 can't read `~/.claude/projects/` on this machine. The plist sets an explicit
 `PATH` because launchd's default is minimal and wouldn't find `claude` or `git`.
+
+---
+
+## The `new_cwd` trap
+
+`terminal.new_cwd` defaults to `"follow"`: a new tab inherits the **source
+pane's current directory**, not the space's identity. That quietly breaks the
+repo-grouping model, because agents following the worktree rule cd into
+`.claude/worktrees/<name>/`. Branch a tab off one of those and it inherits the
+worktree; the next tab inherits that. It compounds.
+
+The damage isn't cosmetic. **A tab born inside a worktree gets its own Claude
+project namespace** — `-…backend--claude-worktrees-<name>` — so everything it
+learns is orphaned when the worktree is removed. This is the mechanism behind
+the orphan namespaces `rnd-harvest --orphans` reports; it was the default path,
+not an edge case.
+
+A second drift compounds it: a space's own `identity_cwd` can be wrong. On this
+machine `wJ` (backend) recorded `/Users/blairmason`, because herdr was launched
+from `$HOME` and `wJ` was the original space — so even "follow the workspace"
+gave home. There is no CLI to correct it; `herdr workspace` has no cwd command,
+and recreating the space costs you its tabs.
+
+`bin/herdr-new-tab` routes around both. It resolves the focused space's repo
+root as the majority `git --git-common-dir` across its panes — and from inside
+a linked worktree that points at the **main checkout's** `.git`, so it lands on
+the repo even when most panes have drifted. It's bound to `prefix+c`, taking
+over the muscle-memory key; the builtin follow-the-cwd behaviour moves to
+`prefix+shift+c` for when you deliberately want a tab beside an agent inside
+its worktree.

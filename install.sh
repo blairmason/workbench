@@ -47,7 +47,7 @@ fi
 
 say "== 2. scripts -> ~/.local/bin"
 run mkdir -p "$HOME/.local/bin"
-for f in herdr-tag-tab git-sync-src.sh rnd-harvest rnd-weekly; do
+for f in herdr-tag-tab herdr-new-tab git-sync-src.sh rnd-harvest rnd-weekly; do
   backup "$HOME/.local/bin/$f"
   run cp "$HERE/bin/$f" "$HOME/.local/bin/$f"
   run chmod +x "$HOME/.local/bin/$f"

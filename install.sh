@@ -1,26 +1,29 @@
 #!/bin/sh
-# Rebuild the herdr + Claude multi-agent setup on a fresh machine.
+# Set up herdr with this layout on a fresh machine.
 #
-# Idempotent: safe to re-run. Backs up anything it would overwrite.
-# Does NOT install the LaunchAgent or edit ~/.claude/CLAUDE.md — both are
-# opt-in and are printed as manual steps at the end.
+# Idempotent and portable: no absolute paths, no assumptions about which repos
+# or directories exist. Backs up anything it would overwrite.
 #
-#   sh install.sh            # install
-#   sh install.sh --check    # show what it would do, change nothing
+#   sh install.sh            install
+#   sh install.sh --check    dry run; change nothing
+#
+# Env:
+#   BIN_DIR   where the helper scripts go (default: $HOME/.local/bin)
 
 set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/herdr"
 STAMP=$(date +%Y%m%d-%H%M%S)
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
 
 say() { printf '%s\n' "$*"; }
 run() { [ "$CHECK" -eq 1 ] && { say "  would: $*"; return 0; }; "$@"; }
-
 backup() {
   [ -e "$1" ] || return 0
-  [ "$CHECK" -eq 1 ] && { say "  would back up $1"; return 0; }
+  [ "$CHECK" -eq 1 ] && { say "  would back up $(basename "$1")"; return 0; }
   cp "$1" "$1.bak.$STAMP"
   say "  backed up $(basename "$1") -> $(basename "$1").bak.$STAMP"
 }
@@ -32,92 +35,61 @@ else
   if command -v brew >/dev/null 2>&1; then
     run brew install herdr
   else
-    say "  !! no herdr and no brew. Install from https://herdr.dev then re-run."
+    say "  !! herdr not found and no brew. Install from https://herdr.dev, then re-run."
     exit 1
   fi
 fi
-# A stray copy earlier in PATH than the real install will shadow it after an
-# upgrade and break the client/server protocol match. Warn loudly.
-FIRST=$(command -v herdr || true)
-if [ -n "$FIRST" ] && [ "$FIRST" != "$(readlink -f "$FIRST" 2>/dev/null || echo "$FIRST")" ]; then :; fi
-if [ -x "$HOME/.local/bin/herdr" ]; then
-  say "  !! ~/.local/bin/herdr exists and will shadow the managed install."
-  say "     Remove it unless you deliberately self-manage herdr there."
-fi
+# A second herdr earlier in PATH than the managed one will, after an upgrade,
+# leave an old client talking to a new server: every command fails on protocol.
+MANAGED=$(command -v herdr || true)
+case "$MANAGED" in
+  "$BIN_DIR/herdr")
+    say "  !! herdr resolves to $BIN_DIR/herdr, which may shadow a package-managed"
+    say "     install. Remove it unless you deliberately self-manage herdr there." ;;
+esac
 
-say "== 2. scripts -> ~/.local/bin"
-run mkdir -p "$HOME/.local/bin"
-for f in herdr-tag-tab herdr-new-tab git-sync-src.sh rnd-harvest rnd-weekly; do
-  backup "$HOME/.local/bin/$f"
-  run cp "$HERE/bin/$f" "$HOME/.local/bin/$f"
-  run chmod +x "$HOME/.local/bin/$f"
+say "== 2. helper scripts -> $BIN_DIR"
+run mkdir -p "$BIN_DIR"
+for f in herdr-tag-tab herdr-new-tab; do
+  backup "$BIN_DIR/$f"
+  run cp "$HERE/bin/$f" "$BIN_DIR/$f"
+  run chmod +x "$BIN_DIR/$f"
   say "  installed $f"
 done
 case ":$PATH:" in
-  *":$HOME/.local/bin:"*) ;;
-  *) say "  !! ~/.local/bin is not on PATH — add it, or the keybindings will no-op." ;;
+  *":$BIN_DIR:"*) ;;
+  *) say "  note: $BIN_DIR is not on your PATH. The keybindings use absolute"
+     say "        paths so they still work, but you won't be able to run the"
+     say "        scripts by name." ;;
 esac
 
-say "== 3. herdr config"
-run mkdir -p "$HOME/.config/herdr"
-backup "$HOME/.config/herdr/config.toml"
-run cp "$HERE/config/herdr-config.toml" "$HOME/.config/herdr/config.toml"
-say "  installed config.toml"
-if [ "$CHECK" -eq 0 ] && command -v herdr >/dev/null 2>&1; then
-  herdr config check || say "  !! config check failed — see above"
-  herdr server reload-config >/dev/null 2>&1 && say "  reloaded running server" || true
-fi
-
-say "== 4. R&D space (~/src/rnd)"
-if [ -d "$HOME/src/rnd" ]; then
-  say "  present"
+say "== 3. herdr config -> $CONFIG_DIR/config.toml"
+run mkdir -p "$CONFIG_DIR"
+backup "$CONFIG_DIR/config.toml"
+if [ "$CHECK" -eq 1 ]; then
+  say "  would render config.toml.tmpl with __BIN__=$BIN_DIR"
 else
-  run mkdir -p "$HOME/src/rnd/topics" "$HOME/src/rnd/roadmap" "$HOME/src/rnd/decisions"
-  run cp "$HERE/rnd-seed/CLAUDE.md" "$HOME/src/rnd/CLAUDE.md"
-  run cp "$HERE/rnd-seed/inbox.md" "$HOME/src/rnd/inbox.md"
-  [ "$CHECK" -eq 0 ] && printf '.harvest/\n' > "$HOME/src/rnd/.gitignore"
-  [ "$CHECK" -eq 0 ] && git -C "$HOME/src/rnd" init -q 2>/dev/null || true
-  say "  seeded + git init"
-fi
-
-say "== 5. git"
-run git config --global fetch.prune true
-say "  fetch.prune = true"
-
-say "== 6. Claude integration"
-if [ -d "$HOME/.claude" ]; then
-  if command -v herdr >/dev/null 2>&1 && [ "$CHECK" -eq 0 ]; then
-    herdr integration status 2>/dev/null | grep -E '^(claude|cursor):' || true
+  sed "s|__BIN__|$BIN_DIR|g" "$HERE/config/herdr-config.toml.tmpl" \
+    > "$CONFIG_DIR/config.toml"
+  say "  rendered config.toml (__BIN__ -> $BIN_DIR)"
+  if command -v herdr >/dev/null 2>&1; then
+    herdr config check || say "  !! config check failed — see above"
+    herdr server reload-config >/dev/null 2>&1 \
+      && say "  reloaded the running server" || true
   fi
-  say "  (herdr installs its own hook; run 'herdr integration install claude' if missing)"
-else
-  say "  ~/.claude not found — install Claude Code first, then re-run."
 fi
 
 cat <<EOF
 
-== Manual steps (deliberately not automated) ==
+== Optional, and manual by necessity ==
 
-1. Global instructions — paste BOTH blocks into ~/.claude/CLAUDE.md:
-     $HERE/claude/CLAUDE-worktree-block.md      (worktree isolation)
-     $HERE/claude/CLAUDE-rnd-capture-block.md   (file learnings to ~/src/rnd)
-   Claude's permission classifier blocks an agent from editing that file, so
-   these are yours. Both are load-bearing.
+If you run several agents per repo, they share one working tree unless each
+isolates itself. The block in
+  $HERE/claude/CLAUDE-worktree-block.md
+tells Claude Code to do that. Paste it into ~/.claude/CLAUDE.md — Claude's
+permission classifier blocks an agent from editing that file, so it can't be
+scripted.
 
-2. Per-project memory (optional) — copy
-     $HERE/claude/memory-worktree-before-editing.md
-   to ~/.claude/projects/<project>/memory/ and add a line to that MEMORY.md.
-   Only needed if you want the instruction scoped per repo instead of global.
-
-3. Weekly R&D consolidation (optional):
-     cp $HERE/launchd/com.blairmason.rnd-weekly.plist ~/Library/LaunchAgents/
-     launchctl load ~/Library/LaunchAgents/com.blairmason.rnd-weekly.plist
-   Mondays 08:47. Dry-run it first: rnd-weekly --dry
-
-4. Hourly git fetch (optional):
-     cp $HERE/launchd/com.blairmason.git-sync-src.plist ~/Library/LaunchAgents/
-     launchctl load ~/Library/LaunchAgents/com.blairmason.git-sync-src.plist
-   Runs at login and hourly thereafter. Fetch-only by default.
-
-Then start herdr with:  herdr
+Start herdr with:  herdr
+Then: ctrl+b ? lists every binding from the running config.
 EOF

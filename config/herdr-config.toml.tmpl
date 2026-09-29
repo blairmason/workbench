@@ -76,8 +76,9 @@ claude = [
 [ui.toast]
 delivery = "system"
 
-# peon-ping already plays sounds via Claude hooks; herdr's would double up.
-# Flip to true if you'd rather herdr own it (it distinguishes background spaces).
+# Off because something else (an agent-side hook) is expected to own sound
+# notifications; two sources double up. Flip to true to let herdr own them --
+# it can distinguish background spaces, which a per-agent hook cannot.
 [ui.sound]
 enabled = false
 
@@ -94,51 +95,51 @@ pane_history = true
 [[keys.command]]
 key = "prefix+alt+f"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab focus"
+command = "__BIN__/herdr-tag-tab focus"
 
 [[keys.command]]
 key = "prefix+alt+q"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab p0"
+command = "__BIN__/herdr-tag-tab p0"
 
 [[keys.command]]
 key = "prefix+alt+w"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab p1"
+command = "__BIN__/herdr-tag-tab p1"
 
 [[keys.command]]
 key = "prefix+alt+e"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab p2"
+command = "__BIN__/herdr-tag-tab p2"
 
 [[keys.command]]
 key = "prefix+alt+r"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab review"
+command = "__BIN__/herdr-tag-tab review"
 
 [[keys.command]]
 key = "prefix+alt+t"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab them"
+command = "__BIN__/herdr-tag-tab them"
 
 [[keys.command]]
 key = "prefix+alt+d"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab unblock"
+command = "__BIN__/herdr-tag-tab unblock"
 
 [[keys.command]]
 key = "prefix+alt+x"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab clear"
+command = "__BIN__/herdr-tag-tab clear"
 
 [[keys.command]]
 key = "prefix+alt+s"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-tag-tab resync"
+command = "__BIN__/herdr-tag-tab resync"
 
 # New tab anchored at the focused space's repo root (resolves a worktree back
 # to its main checkout). Builtin follow-the-cwd behaviour is on prefix+shift+c.
 [[keys.command]]
 key = "prefix+c"
 type = "shell"
-command = "/Users/blairmason/.local/bin/herdr-new-tab"
+command = "__BIN__/herdr-new-tab"

@@ -29,6 +29,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 
 DEFAULT_AGENTS = [
     ("claude — opus", "claude", ["--model", "opus"]),
@@ -39,8 +40,11 @@ DEFAULT_AGENTS = [
 ]
 
 
-def herdr(*args):
-    return subprocess.run(["herdr", *args], capture_output=True, text=True).stdout
+def herdr(*args, with_err=False):
+    r = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    # herdr reports server errors as JSON on stderr with exit status 1, so any
+    # caller that inspects failures has to ask for stderr explicitly.
+    return (r.stdout + r.stderr) if with_err else r.stdout
 
 
 def jget(*args):
@@ -152,7 +156,9 @@ def main():
         if picked:
             agent = next((a for a in choices if a[0] == picked), None)
 
-    create = ["tab", "create", "--workspace", ws, "--cwd", root, "--focus"]
+    # Created UNFOCUSED: focus is taken at the very end, so the popup keeps
+    # the keyboard until you're done with it.
+    create = ["tab", "create", "--workspace", ws, "--cwd", root, "--no-focus"]
     if name:
         create += ["--label", name]
     out = herdr(*create)
@@ -165,24 +171,37 @@ def main():
         return 1
     print(f"{tab_id} at {root}")
 
-    # Start the agent before labelling: `agent start` needs the pane sitting at
-    # an interactive shell prompt, and it blocks until the agent is ready.
+    # `agent start` needs the pane at an interactive shell prompt. A brand-new
+    # pane isn't there yet -- a login shell with heavy rc files takes a few
+    # seconds -- and it reports agent_pane_busy until it is. So retry.
     if agent and agent[1]:
         kind, extra = agent[1], agent[2]
-        cmd = ["agent", "start", kind, "--kind", kind, "--pane", pane_id]
+        cmd = ["agent", "start", kind, "--kind", kind, "--pane", pane_id,
+               "--timeout", "90000"]
         if extra:
             cmd += ["--"] + extra
-        res = herdr(*cmd)
-        if '"error"' in res or not res.strip():
-            print(f"agent start failed: {res.strip()[:200] or 'no response'}")
-        else:
+        deadline = time.monotonic() + 30
+        res = ""
+        while time.monotonic() < deadline:
+            res = herdr(*cmd, with_err=True)
+            if "interactive_ready" in res:
+                break
+            if "agent_pane_busy" not in res:
+                break
+            time.sleep(1.0)
+        if "interactive_ready" in res:
             print(f"started {kind} {' '.join(extra)}".rstrip())
+        else:
+            print(f"agent start failed: {res.strip()[:200] or 'no response'}")
 
-    # Labelling last: herdr-tag-tab acts on the focused tab, which is this one.
+    # Label the tab explicitly by id -- it is not focused yet.
     if wizard:
         tagger = sibling("herdr-tag-tab")
         if tagger:
-            subprocess.run([tagger, "pick"])
+            subprocess.run([tagger, "pick", "--tab", tab_id])
+
+    # Focus last, once every prompt is done with.
+    herdr("tab", "focus", tab_id)
     return 0
 
 

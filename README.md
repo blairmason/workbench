@@ -228,9 +228,19 @@ herdr-new-space --list       # show candidates, create nothing
 Each is skippable with enter or esc, so hammering enter three times gives you
 exactly the plain anchored tab you'd have got before.
 
-The agent starts *before* labelling, because `herdr agent start` requires the
-pane to be sitting at an interactive shell prompt and blocks until the agent
-reports ready — so the tab is live by the time you tag it.
+**The new tab is created unfocused and focused only at the end**, so the popup
+keeps the keyboard until you've finished every prompt. Labelling therefore
+targets the tab by id (`herdr-tag-tab pick --tab <id>`) rather than acting on
+whatever is focused.
+
+`herdr agent start` requires the pane to be at an interactive shell prompt, and
+a brand-new pane is not there yet — a login shell with heavy rc files can take
+several seconds, and the server answers `agent_pane_busy` until it settles. The
+wizard retries for up to 30s. Two traps worth knowing if you touch this code:
+herdr reports errors as **JSON on stderr** with exit status 1, so a retry loop
+that only reads stdout sees an empty string and gives up immediately; and the
+readiness delay is real (observed 2–8s here), so a single attempt is a coin
+flip.
 
 The offered agents default to claude (opus / sonnet / default), codex, and a
 plain shell. Override with `$HERDR_TAB_AGENTS` — entries separated by `;`,

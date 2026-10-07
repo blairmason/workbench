@@ -84,8 +84,9 @@ claude = [
 [ui.toast]
 delivery = "system"
 
-# peon-ping already plays sounds via Claude hooks; herdr's would double up.
-# Flip to true if you'd rather herdr own it (it distinguishes background spaces).
+# Off because an agent-side hook is expected to own sound notifications; two
+# sources double up. Flip to true to let herdr own them instead -- it can tell
+# background spaces apart, which a per-agent hook cannot.
 [ui.sound]
 enabled = false
 

@@ -53,9 +53,16 @@ def roots():
 
 
 def is_main_checkout(d):
-    """True for a real repo; False for a linked worktree (whose .git is a file)."""
-    g = d / ".git"
-    return g.is_dir()
+    """True for a real repo; False for a linked worktree (whose .git is a file).
+
+    Unreadable directories are common under a repo root (restricted vendor
+    trees, MDM-managed paths), and a bare stat() raises rather than returning
+    False -- which would abort the whole scan.
+    """
+    try:
+        return (d / ".git").is_dir()
+    except OSError:
+        return False
 
 
 def find_repos():
@@ -68,7 +75,10 @@ def find_repos():
             except OSError:
                 continue
             for d in candidates:
-                if not d.is_dir() or d in seen:
+                try:
+                    if not d.is_dir() or d in seen:
+                        continue
+                except OSError:
                     continue
                 if is_main_checkout(d):
                     seen.add(d)
